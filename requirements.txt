@@ -59,3 +59,4 @@ WebOb>=1.2.3
 -e git+https://github.com/openstack/oslo.serialization.git#egg=oslo.serialization
 -e git+https://github.com/openstack/oslo.service.git#egg=oslo.service
 -e git+https://github.com/openstack/oslo.utils.git#egg=oslo.utils
+-e git+https://github.com/openstack/oslo.versionedobjects.git#egg=oslo.versionedobjects
