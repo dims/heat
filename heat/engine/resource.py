@@ -213,9 +213,11 @@ class Resource(object):
         self.abandon_in_progress = False
 
         self.resource_id = None
-        # if the stack is being deleted, assume we've already been deleted
-        if stack.action == stack.DELETE:
-            self.action = self.DELETE
+        # if the stack is being deleted, assume we've already been deleted.
+        # or if the resource has not been created yet, and the stack was
+        # rollback, we set the resource to rollback
+        if stack.action == stack.DELETE or stack.action == stack.ROLLBACK:
+            self.action = stack.action
         else:
             self.action = self.INIT
         self.status = self.COMPLETE
@@ -225,8 +227,8 @@ class Resource(object):
         self._data = {}
         self._rsrc_metadata = None
         self._stored_properties_data = None
-        self.created_time = None
-        self.updated_time = None
+        self.created_time = stack.created_time
+        self.updated_time = stack.updated_time
         self._rpc_client = None
         self.needed_by = []
         self.requires = []
@@ -234,7 +236,7 @@ class Resource(object):
         self.replaced_by = None
         self.current_template_id = None
 
-        if not stack.has_cache_data():
+        if not stack.has_cache_data(name):
             resource = stack.db_resource_get(name)
             if resource:
                 self._load_data(resource)
@@ -402,6 +404,10 @@ class Resource(object):
                 self._add_event(
                     self.action, self.status,
                     "Failure occurred while waiting.")
+
+    def has_nested(self):
+        # common resources have not nested, StackResource overrides it
+        return False
 
     def has_hook(self, hook):
         # Clear the cache to make sure the data is up to date:
@@ -1427,8 +1433,8 @@ class Resource(object):
 
         :results: the id or name of the resource.
         '''
-        if self.stack.has_cache_data():
-            return self.stack.cache_data_resource_id(self.name)
+        if self.stack.has_cache_data(self.name):
+            return self.stack.cache_data_reference_id(self.name)
 
         if self.resource_id is not None:
             return six.text_type(self.resource_id)
@@ -1450,7 +1456,7 @@ class Resource(object):
         :param path: a list of path components to select from the attribute.
         :returns: the attribute value.
         '''
-        if self.stack.has_cache_data():
+        if self.stack.has_cache_data(self.name):
             # Load from cache for lightweight resources.
             attribute = self.stack.cache_data_resource_attribute(
                 self.name, key)

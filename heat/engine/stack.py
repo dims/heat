@@ -235,14 +235,10 @@ class Stack(collections.Mapping):
         for res in six.itervalues(self):
             yield res
 
-            get_nested = getattr(res, 'nested', None)
-            if not callable(get_nested) or nested_depth == 0:
+            if not res.has_nested() or nested_depth == 0:
                 continue
 
-            nested_stack = get_nested()
-            if nested_stack is None:
-                continue
-
+            nested_stack = res.nested()
             for nested_res in nested_stack.iter_resources(nested_depth - 1):
                 yield nested_res
 
@@ -860,7 +856,7 @@ class Stack(collections.Mapping):
 
     def supports_check_action(self):
         def is_supported(stack, res):
-            if hasattr(res, 'nested'):
+            if res.has_nested():
                 return res.nested().supports_check_action()
             else:
                 return hasattr(res, 'handle_%s' % self.CHECK.lower())
@@ -1607,19 +1603,17 @@ class Stack(collections.Mapping):
         for res in six.itervalues(self.resources):
             res.attributes.reset_resolved_values()
 
-    def has_cache_data(self):
-        if self.cache_data is not None:
-            return True
+    def has_cache_data(self, resource_name):
+        return (self.cache_data is not None and
+                self.cache_data.get(resource_name) is not None)
 
-        return False
-
-    def cache_data_resource_id(self, resource_name):
+    def cache_data_reference_id(self, resource_name):
         return self.cache_data.get(
-            resource_name, {}).get('physical_resource_id')
+            resource_name, {}).get('reference_id')
 
     def cache_data_resource_attribute(self, resource_name, attribute_key):
         return self.cache_data.get(
-            resource_name, {}).get('attributes', {}).get(attribute_key)
+            resource_name, {}).get('attrs', {}).get(attribute_key)
 
     def mark_complete(self, traversal_id):
         '''

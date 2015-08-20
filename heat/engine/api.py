@@ -15,7 +15,6 @@ from oslo_log import log as logging
 from oslo_utils import timeutils
 import six
 
-from heat.common import exception
 from heat.common.i18n import _
 from heat.common.i18n import _LE
 from heat.common import param_utils
@@ -193,11 +192,12 @@ def format_stack_resource(resource, detail=True, with_props=False,
     Return a representation of the given resource that matches the API output
     expectations.
     '''
-    created_time = resource.created_time or timeutils.utcnow()
-    last_updated_time = resource.updated_time or created_time
+    created_time = resource.created_time and resource.created_time.isoformat()
+    last_updated_time = (resource.updated_time and
+                         resource.updated_time.isoformat()) or created_time
     res = {
-        rpc_api.RES_UPDATED_TIME: last_updated_time.isoformat(),
-        rpc_api.RES_CREATION_TIME: created_time.isoformat(),
+        rpc_api.RES_UPDATED_TIME: last_updated_time,
+        rpc_api.RES_CREATION_TIME: created_time,
         rpc_api.RES_NAME: resource.name,
         rpc_api.RES_PHYSICAL_ID: resource.resource_id or '',
         rpc_api.RES_ACTION: resource.action,
@@ -210,13 +210,9 @@ def format_stack_resource(resource, detail=True, with_props=False,
         rpc_api.RES_REQUIRED_BY: resource.required_by(),
     }
 
-    try:
-        if (hasattr(resource, 'nested') and callable(resource.nested) and
-                resource.nested() is not None):
-            res[rpc_api.RES_NESTED_STACK_ID] = dict(
-                resource.nested().identifier())
-    except exception.NotFound:
-        pass
+    if resource.has_nested():
+        res[rpc_api.RES_NESTED_STACK_ID] = dict(
+            resource.nested().identifier())
 
     if resource.stack.parent_resource_name:
         res[rpc_api.RES_PARENT_RESOURCE] = resource.stack.parent_resource_name
