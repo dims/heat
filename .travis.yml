@@ -2,7 +2,6 @@ language: python
 sudo: true
 env:
   - TOXENV=py27
-  - TOXENV=integration
 install:
   - travis_retry pip install tox
 script:
