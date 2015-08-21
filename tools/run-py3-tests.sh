@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
 
 testr init
-testr run --parallel `cat py3-testlist`
+testr run --concurrency=5 --parallel `cat py3-testlist`
