@@ -25,6 +25,7 @@ from osprofiler import profiler
 import six
 
 from heat.common import context as common_context
+from heat.common import environment_format as env_fmt
 from heat.common import exception
 from heat.common.i18n import _
 from heat.common.i18n import _LE
@@ -60,6 +61,9 @@ LOG = logging.getLogger(__name__)
 
 class ForcedCancel(BaseException):
     """Exception raised to cancel task execution."""
+
+    def __init__(self, with_rollback=True):
+        self.with_rollback = with_rollback
 
     def __str__(self):
         return "Operation cancelled"
@@ -1127,6 +1131,8 @@ class Stack(collections.Mapping):
                              **kwargs)
 
         backup_stack = self._backup_stack()
+        existing_params = environment.Environment({env_fmt.PARAMETERS:
+                                                  self.t.env.params})
         try:
             update_task = update.StackUpdate(
                 self, newstack, backup_stack,
@@ -1190,6 +1196,12 @@ class Stack(collections.Mapping):
 
         notification.send(self)
         self._add_event(self.action, self.status, self.status_reason)
+        if self.status == self.FAILED:
+            # Since template was incrementally updated based on existing and
+            # new stack resources, we should have user params of both.
+            existing_params.load(newstack.t.env.user_env_as_dict())
+            self.t.env = existing_params
+            self.t.store(self.context)
         self.store()
 
         lifecycle_plugin_utils.do_post_ops(self.context, self,
@@ -1197,20 +1209,27 @@ class Stack(collections.Mapping):
                                            (self.status == self.FAILED))
 
     def _update_exception_handler(self, exc, action, update_task):
-        require_rollback = False
+        '''
+        Handle exceptions in update_task. Decide if we should cancel tasks or
+        not. Also decide if we should rollback or not, depend on disable
+        rollback flag if force rollback flag not trigered.
+        :returns: a boolean for require rollback flag
+        '''
         self.status_reason = six.text_type(exc)
         self.status = self.FAILED
-        if action == self.UPDATE:
-            if not self.disable_rollback:
-                require_rollback = True
-            if isinstance(exc, ForcedCancel):
-                update_task.updater.cancel_all()
-                require_rollback = True
-        return require_rollback
+        if action != self.UPDATE:
+            return False
+        if isinstance(exc, ForcedCancel):
+            update_task.updater.cancel_all()
+            return exc.with_rollback or not self.disable_rollback
+
+        return not self.disable_rollback
 
     def _message_parser(self, message):
         if message == rpc_api.THREAD_CANCEL:
-            raise ForcedCancel()
+            raise ForcedCancel(with_rollback=False)
+        elif message == rpc_api.THREAD_CANCEL_WITH_ROLLBACK:
+            raise ForcedCancel(with_rollback=True)
 
     def _delete_backup_stack(self, stack):
         # Delete resources in the backup stack referred to by 'stack'
