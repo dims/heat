@@ -151,6 +151,10 @@ class Resource(object):
     # no signal actions
     no_signal_actions = (SUSPEND, DELETE)
 
+    # Whether all other resources need a metadata_update() after
+    # a signal to this resource
+    signal_needs_metadata_updates = True
+
     def __new__(cls, name, definition, stack):
         '''Create a new Resource of the appropriate class for its type.'''
 
@@ -176,7 +180,7 @@ class Resource(object):
                 service_name=ResourceClass.default_client_name,
                 resource_type=definition.resource_type
             )
-            LOG.error(six.text_type(ex))
+            LOG.info(six.text_type(ex))
 
             raise ex
 
@@ -295,6 +299,7 @@ class Resource(object):
             if swap_template:
                 prev_tmpl = stk.t
                 stk.t = tmpl
+                stk.resources
             yield stk
             if swap_template:
                 stk.t = prev_tmpl
