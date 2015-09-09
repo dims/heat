@@ -51,10 +51,10 @@ class BaseVolume(resource.Resource):
         if vol.status in self._volume_creating_status:
             return False
         if vol.status == 'error':
-            raise resource.ResourceInError(
+            raise exception.ResourceInError(
                 resource_status=vol.status)
         else:
-            raise resource.ResourceUnknownStatus(
+            raise exception.ResourceUnknownStatus(
                 resource_status=vol.status,
                 result=_('Volume create failed'))
 
@@ -108,7 +108,7 @@ class BaseVolume(resource.Resource):
         if backup.status == 'available':
             return True
         else:
-            raise resource.ResourceUnknownStatus(
+            raise exception.ResourceUnknownStatus(
                 resource_status=backup.status,
                 result=_('Volume backup failed'))
 

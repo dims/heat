@@ -31,6 +31,7 @@ from heat.engine.clients.os import glance
 from heat.engine.clients.os import keystone
 from heat.engine.clients.os import neutron
 from heat.engine.clients.os import nova
+from heat.engine.clients.os import sahara
 from heat.engine.clients.os import trove
 from heat.engine import environment
 from heat.engine import resource
@@ -175,6 +176,10 @@ class HeatTestCase(testscenarios.WithScenarios,
                                  generic_rsrc.ResourceWithRestoreType)
         resource._register_class('DynamicSchemaResource',
                                  generic_rsrc.DynamicSchemaResource)
+        resource._register_class('ResourceTypeUnSupportedLiberty',
+                                 generic_rsrc.ResourceTypeUnSupportedLiberty)
+        resource._register_class('ResourceTypeSupportedKilo',
+                                 generic_rsrc.ResourceTypeSupportedKilo)
 
     def patchobject(self, obj, attr, **kwargs):
         mockfixture = self.useFixture(mockpatch.PatchObject(obj, attr,
@@ -258,4 +263,13 @@ class HeatTestCase(testscenarios.WithScenarios,
 
     def stub_NovaNetworkConstraint(self):
         validate = self.patchobject(nova.NetworkConstraint, 'validate')
+        validate.return_value = True
+
+    def stub_KeystoneProjectConstraint(self):
+        validate = self.patchobject(keystone.KeystoneProjectConstraint,
+                                    'validate')
+        validate.return_value = True
+
+    def stub_SaharaPluginConstraint(self):
+        validate = self.patchobject(sahara.PluginConstraint, 'validate')
         validate.return_value = True

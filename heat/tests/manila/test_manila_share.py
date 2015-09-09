@@ -18,7 +18,6 @@ import six
 
 from heat.common import exception
 from heat.common import template_format
-from heat.engine import resource
 from heat.engine.resources.openstack.manila import share as mshare
 from heat.engine import rsrc_defn
 from heat.engine import scheduler
@@ -127,7 +126,7 @@ class ManilaShareTest(common.HeatTestCase):
     def test_share_create_fail(self):
         share = self._init_share("stack_share_create_fail")
         share.client().shares.get.return_value = self.failed_share
-        exc = self.assertRaises(resource.ResourceInError,
+        exc = self.assertRaises(exception.ResourceInError,
                                 share.check_create_complete,
                                 self.failed_share)
         self.assertIn("Error during creation", six.text_type(exc))
@@ -135,7 +134,7 @@ class ManilaShareTest(common.HeatTestCase):
     def test_share_create_unknown_status(self):
         share = self._init_share("stack_share_create_unknown")
         share.client().shares.get.return_value = self.deleting_share
-        exc = self.assertRaises(resource.ResourceUnknownStatus,
+        exc = self.assertRaises(exception.ResourceUnknownStatus,
                                 share.check_create_complete,
                                 self.deleting_share)
         self.assertIn("Unknown status", six.text_type(exc))

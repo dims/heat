@@ -212,7 +212,7 @@ class RemoteStack(resource.Resource):
         self.heat().actions.check(stack_id=self.resource_id)
 
     def _needs_update(self, after, before, after_props, before_props,
-                      prev_resource):
+                      prev_resource, check_init_complete=True):
         # Always issue an update to the remote stack and let the individual
         # resources in it decide if they need updating.
         return True
@@ -251,13 +251,13 @@ class RemoteStack(resource.Resource):
         elif stack.status == self.COMPLETE:
             return True
         elif stack.status == self.FAILED:
-            raise resource.ResourceInError(
+            raise exception.ResourceInError(
                 resource_status=stack.stack_status,
                 status_reason=stack.stack_status_reason)
         else:
             # Note: this should never happen, so it really means that
             # the resource/engine is in serious problem if it happens.
-            raise resource.ResourceUnknownStatus(
+            raise exception.ResourceUnknownStatus(
                 resource_status=stack.stack_status,
                 status_reason=stack.stack_status_reason)
 

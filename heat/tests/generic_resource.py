@@ -23,7 +23,7 @@ from heat.engine import resource
 from heat.engine.resources import signal_responder
 from heat.engine.resources import stack_resource
 from heat.engine.resources import stack_user
-
+from heat.engine import support
 LOG = logging.getLogger(__name__)
 
 
@@ -295,3 +295,14 @@ class DynamicSchemaResource(resource.Resource):
             return "dynamic_attribute"
         else:
             raise KeyError()
+
+
+class ResourceTypeUnSupportedLiberty(GenericResource):
+    support_status = support.SupportStatus(
+        version='5.0.0',
+        status=support.UNSUPPORTED)
+
+
+class ResourceTypeSupportedKilo(GenericResource):
+    support_status = support.SupportStatus(
+        version='2015.1')

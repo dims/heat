@@ -111,10 +111,10 @@ class NeutronResource(resource.Resource):
         if status in ('ACTIVE', 'DOWN'):
             return True
         elif status == 'ERROR':
-            raise resource.ResourceInError(
+            raise exception.ResourceInError(
                 resource_status=status)
         else:
-            raise resource.ResourceUnknownStatus(
+            raise exception.ResourceUnknownStatus(
                 resource_status=status,
                 result=_('Resource is not built'))
 

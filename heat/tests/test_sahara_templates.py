@@ -42,6 +42,7 @@ resources:
         node_processes:
           - namenode
           - jobtracker
+        is_proxy_gateway: True
 """
 
 cluster_template = """
@@ -101,8 +102,9 @@ class FakeClusterTemplate(object):
 class SaharaNodeGroupTemplateTest(common.HeatTestCase):
     def setUp(self):
         super(SaharaNodeGroupTemplateTest, self).setUp()
-        self.patchobject(st.constraints.CustomConstraint,
-                         '_is_valid').return_value = True
+        self.stub_FlavorConstraint_validate()
+        self.stub_SaharaPluginConstraint()
+        self.stub_VolumeTypeConstraint_validate()
         self.patchobject(nova.NovaClientPlugin, 'get_flavor_id'
                          ).return_value = 'someflavorid'
         self.patchobject(neutron.NeutronClientPlugin, '_create')
@@ -152,6 +154,9 @@ class SaharaNodeGroupTemplateTest(common.HeatTestCase):
                            'floating_ip_pool': 'some_pool_id',
                            'node_configs': None,
                            'image_id': None,
+                           'is_proxy_gateway': True,
+                           'volume_local_to_instance': None,
+                           'use_autoconfig': None
                            }
         self.ngt_mgr.create.assert_called_once_with(*expected_args,
                                                     **expected_kwargs)
@@ -211,7 +216,7 @@ class SaharaNodeGroupTemplateTest(common.HeatTestCase):
         self.t['resources']['node-group']['properties'].pop('floating_ip_pool')
         self.t['resources']['node-group']['properties'].pop('volume_type')
         ngt = self._init_ngt(self.t)
-        self.patchobject(st.constraints.CustomConstraint, '_is_valid'
+        self.patchobject(nova.FlavorConstraint, 'validate'
                          ).return_value = False
         self.patchobject(ngt, 'is_using_neutron').return_value = False
 
@@ -284,7 +289,8 @@ class SaharaClusterTemplateTest(common.HeatTestCase):
                            'net_id': 'some_network_id',
                            'anti_affinity': None,
                            'node_groups': None,
-                           'cluster_configs': None
+                           'cluster_configs': None,
+                           'use_autoconfig': None
                            }
         self.ct_mgr.create.assert_called_once_with(*expected_args,
                                                    **expected_kwargs)

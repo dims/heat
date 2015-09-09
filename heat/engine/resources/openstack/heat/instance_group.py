@@ -14,6 +14,7 @@
 from heat.common import environment_format
 from heat.common import grouputils
 from heat.common.i18n import _
+from heat.common import short_id
 from heat.common import timeutils as iso8601utils
 from heat.engine import attributes
 from heat.engine import environment
@@ -23,6 +24,7 @@ from heat.engine.resources import stack_resource
 from heat.engine import rsrc_defn
 from heat.engine import scheduler
 from heat.scaling import lbutils
+from heat.scaling import rolling_update
 from heat.scaling import template
 
 
@@ -257,12 +259,13 @@ class InstanceGroup(stack_resource.StackResource):
         """
         Create a template to represent autoscaled instances.
 
-        Also see heat.scaling.template.resource_templates.
+        Also see heat.scaling.template.member_definitions.
         """
         instance_definition = self._get_instance_definition()
         old_resources = self._get_instance_templates()
-        definitions = template.resource_templates(
-            old_resources, instance_definition, num_instances, num_replace)
+        definitions = template.member_definitions(
+            old_resources, instance_definition, num_instances, num_replace,
+            short_id.generate_id)
 
         child_env = environment.get_child_environment(
             self.stack.env,
@@ -280,15 +283,13 @@ class InstanceGroup(stack_resource.StackResource):
                           policy[self.MAX_BATCH_SIZE],
                           pause_sec)
 
-    def _update_timeout(self, efft_capacity, efft_bat_sz, pause_sec):
-        batch_cnt = (efft_capacity + efft_bat_sz - 1) // efft_bat_sz
-        if pause_sec * (batch_cnt - 1) >= self.stack.timeout_secs():
+    def _update_timeout(self, batch_cnt, pause_sec):
+        total_pause_time = pause_sec * max(batch_cnt - 1, 0)
+        if total_pause_time >= self.stack.timeout_secs():
             msg = _('The current %s will result in stack update '
                     'timeout.') % rsrc_defn.UPDATE_POLICY
             raise ValueError(msg)
-        update_timeout = self.stack.timeout_secs() - (
-            pause_sec * (batch_cnt - 1))
-        return update_timeout
+        return self.stack.timeout_secs() - total_pause_time
 
     def _replace(self, min_in_service, batch_size, pause_sec):
         """
@@ -310,33 +311,46 @@ class InstanceGroup(stack_resource.StackResource):
                     return
 
         capacity = len(self.nested()) if self.nested() else 0
-        efft_bat_sz = min(batch_size, capacity)
-        efft_min_sz = min(min_in_service, capacity)
+        batches = list(self._get_batches(capacity, batch_size, min_in_service))
 
-        # effective capacity includes temporary capacity added to accommodate
-        # the minimum number of instances in service during update
-        efft_capacity = max(capacity - efft_bat_sz, efft_min_sz) + efft_bat_sz
-        update_timeout = self._update_timeout(efft_capacity,
-                                              efft_bat_sz, pause_sec)
+        update_timeout = self._update_timeout(len(batches), pause_sec)
+
         try:
-            remainder = capacity
-            while remainder > 0 or efft_capacity > capacity:
-                if capacity - remainder >= efft_min_sz:
-                    efft_capacity = capacity
-                template = self._create_template(efft_capacity, efft_bat_sz)
+            for index, (total_capacity, efft_bat_sz) in enumerate(batches):
+                template = self._create_template(total_capacity, efft_bat_sz)
                 self._lb_reload(exclude=changing_instances(template))
                 updater = self.update_with_template(template)
                 checker = scheduler.TaskRunner(self._check_for_completion,
                                                updater)
                 checker(timeout=update_timeout)
-                remainder -= efft_bat_sz
-                if ((remainder > 0 or efft_capacity > capacity) and
-                        pause_sec > 0):
+                if index < (len(batches) - 1) and pause_sec > 0:
                     self._lb_reload()
                     waiter = scheduler.TaskRunner(pause_between_batch)
                     waiter(timeout=pause_sec)
         finally:
             self._lb_reload()
+
+    @staticmethod
+    def _get_batches(capacity, batch_size, min_in_service):
+        """
+        Return an iterator over the batches in a batched update.
+
+        Each batch is a tuple comprising the total size of the group after
+        processing the batch, and the number of members that can receive the
+        new definition in that batch (either by creating a new member or
+        updating an existing one).
+        """
+
+        efft_capacity = capacity
+        updated = 0
+
+        while rolling_update.needs_update(capacity, efft_capacity, updated):
+            batch = rolling_update.next_batch(capacity, efft_capacity,
+                                              updated, batch_size,
+                                              min_in_service)
+            yield batch
+            efft_capacity, num_updates = batch
+            updated += num_updates
 
     def _check_for_completion(self, updater):
         while not self.check_update_complete(updater):

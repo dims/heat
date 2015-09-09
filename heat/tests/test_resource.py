@@ -371,7 +371,7 @@ class ResourceTest(common.HeatTestCase):
         utmpl = rsrc_defn.ResourceDefinition('test_resource', 'TestResource',
                                              {'a_string': 'foo'})
         self.assertRaises(
-            resource.UpdateReplace, scheduler.TaskRunner(res.update, utmpl))
+            exception.UpdateReplace, scheduler.TaskRunner(res.update, utmpl))
 
     def test_update_replace_in_failed_without_nested(self):
         tmpl = rsrc_defn.ResourceDefinition('test_resource',
@@ -394,7 +394,7 @@ class ResourceTest(common.HeatTestCase):
         # resource in failed status and hasn't nested will enter
         # UpdateReplace flow
         self.assertRaises(
-            resource.UpdateReplace, scheduler.TaskRunner(res.update, utmpl))
+            exception.UpdateReplace, scheduler.TaskRunner(res.update, utmpl))
 
         self.m.VerifyAll()
 
@@ -586,7 +586,7 @@ class ResourceTest(common.HeatTestCase):
         after_props = {'Bar': '456'}
         res = generic_rsrc.ResourceWithProps('test_resource', tmpl, self.stack)
         res.update_allowed_properties = ('Cat',)
-        self.assertRaises(resource.UpdateReplace,
+        self.assertRaises(exception.UpdateReplace,
                           res.update_template_diff_properties,
                           after_props, before_props)
 
@@ -682,11 +682,11 @@ class ResourceTest(common.HeatTestCase):
 
         # first attempt to create fails
         generic_rsrc.ResourceWithProps.handle_create().AndRaise(
-            resource.ResourceInError(resource_name='test_resource',
-                                     resource_status='ERROR',
-                                     resource_type='GenericResourceType',
-                                     resource_action='CREATE',
-                                     status_reason='just because'))
+            exception.ResourceInError(resource_name='test_resource',
+                                      resource_status='ERROR',
+                                      resource_type='GenericResourceType',
+                                      resource_action='CREATE',
+                                      status_reason='just because'))
         # delete error resource from first attempt
         generic_rsrc.ResourceWithProps.handle_delete().AndReturn(None)
 
@@ -711,11 +711,11 @@ class ResourceTest(common.HeatTestCase):
 
         # attempt to create fails
         generic_rsrc.ResourceWithProps.handle_create().AndRaise(
-            resource.ResourceInError(resource_name='test_resource',
-                                     resource_status='ERROR',
-                                     resource_type='GenericResourceType',
-                                     resource_action='CREATE',
-                                     status_reason='just because'))
+            exception.ResourceInError(resource_name='test_resource',
+                                      resource_status='ERROR',
+                                      resource_type='GenericResourceType',
+                                      resource_action='CREATE',
+                                      status_reason='just because'))
         self.m.ReplayAll()
 
         estr = ('ResourceInError: resources.test_resource: '
@@ -738,26 +738,26 @@ class ResourceTest(common.HeatTestCase):
 
         # first attempt to create fails
         generic_rsrc.ResourceWithProps.handle_create().AndRaise(
-            resource.ResourceInError(resource_name='test_resource',
-                                     resource_status='ERROR',
-                                     resource_type='GenericResourceType',
-                                     resource_action='CREATE',
-                                     status_reason='just because'))
+            exception.ResourceInError(resource_name='test_resource',
+                                      resource_status='ERROR',
+                                      resource_type='GenericResourceType',
+                                      resource_action='CREATE',
+                                      status_reason='just because'))
         # first attempt to delete fails
         generic_rsrc.ResourceWithProps.handle_delete().AndRaise(
-            resource.ResourceInError(resource_name='test_resource',
-                                     resource_status='ERROR',
-                                     resource_type='GenericResourceType',
-                                     resource_action='DELETE',
-                                     status_reason='delete failed'))
+            exception.ResourceInError(resource_name='test_resource',
+                                      resource_status='ERROR',
+                                      resource_type='GenericResourceType',
+                                      resource_action='DELETE',
+                                      status_reason='delete failed'))
         # second attempt to delete fails
         timeutils.retry_backoff_delay(1, jitter_max=2.0).AndReturn(0.01)
         generic_rsrc.ResourceWithProps.handle_delete().AndRaise(
-            resource.ResourceInError(resource_name='test_resource',
-                                     resource_status='ERROR',
-                                     resource_type='GenericResourceType',
-                                     resource_action='DELETE',
-                                     status_reason='delete failed again'))
+            exception.ResourceInError(resource_name='test_resource',
+                                      resource_status='ERROR',
+                                      resource_type='GenericResourceType',
+                                      resource_action='DELETE',
+                                      status_reason='delete failed again'))
 
         # third attempt to delete succeeds
         timeutils.retry_backoff_delay(2, jitter_max=2.0).AndReturn(0.01)
@@ -783,22 +783,22 @@ class ResourceTest(common.HeatTestCase):
 
         # first attempt to create fails
         generic_rsrc.ResourceWithProps.handle_create().AndRaise(
-            resource.ResourceInError(resource_name='test_resource',
-                                     resource_status='ERROR',
-                                     resource_type='GenericResourceType',
-                                     resource_action='CREATE',
-                                     status_reason='just because'))
+            exception.ResourceInError(resource_name='test_resource',
+                                      resource_status='ERROR',
+                                      resource_type='GenericResourceType',
+                                      resource_action='CREATE',
+                                      status_reason='just because'))
         # delete error resource from first attempt
         generic_rsrc.ResourceWithProps.handle_delete().AndReturn(None)
 
         # second attempt to create fails
         timeutils.retry_backoff_delay(1, jitter_max=2.0).AndReturn(0.01)
         generic_rsrc.ResourceWithProps.handle_create().AndRaise(
-            resource.ResourceInError(resource_name='test_resource',
-                                     resource_status='ERROR',
-                                     resource_type='GenericResourceType',
-                                     resource_action='CREATE',
-                                     status_reason='just because'))
+            exception.ResourceInError(resource_name='test_resource',
+                                      resource_status='ERROR',
+                                      resource_type='GenericResourceType',
+                                      resource_action='CREATE',
+                                      status_reason='just because'))
         # delete error resource from second attempt
         generic_rsrc.ResourceWithProps.handle_delete().AndReturn(None)
 
@@ -859,12 +859,12 @@ class ResourceTest(common.HeatTestCase):
         tmpl_diff = {'Properties': {'Foo': 'xyz'}}
         prop_diff = {'Foo': 'xyz'}
         generic_rsrc.ResourceWithProps.handle_update(
-            utmpl, tmpl_diff, prop_diff).AndRaise(resource.UpdateReplace(
+            utmpl, tmpl_diff, prop_diff).AndRaise(exception.UpdateReplace(
                 res.name))
         self.m.ReplayAll()
         # should be re-raised so parser.Stack can handle replacement
         updater = scheduler.TaskRunner(res.update, utmpl)
-        ex = self.assertRaises(resource.UpdateReplace, updater)
+        ex = self.assertRaises(exception.UpdateReplace, updater)
         self.assertEqual('The Resource test_resource requires replacement.',
                          six.text_type(ex))
         self.m.VerifyAll()
@@ -885,11 +885,11 @@ class ResourceTest(common.HeatTestCase):
         tmpl_diff = {'Properties': {'Foo': 'xyz'}}
         prop_diff = {'Foo': 'xyz'}
         generic_rsrc.ResourceWithProps.handle_update(
-            utmpl, tmpl_diff, prop_diff).AndRaise(resource.UpdateReplace())
+            utmpl, tmpl_diff, prop_diff).AndRaise(exception.UpdateReplace())
         self.m.ReplayAll()
         # should be re-raised so parser.Stack can handle replacement
         updater = scheduler.TaskRunner(res.update, utmpl)
-        ex = self.assertRaises(resource.UpdateReplace, updater)
+        ex = self.assertRaises(exception.UpdateReplace, updater)
         self.assertEqual('The Resource Unknown requires replacement.',
                          six.text_type(ex))
         self.m.VerifyAll()
@@ -903,7 +903,7 @@ class ResourceTest(common.HeatTestCase):
         self.assertEqual((res.INIT, res.COMPLETE), res.state)
 
         prop = {'Foo': 'abc'}
-        self.assertRaises(resource.UpdateReplace,
+        self.assertRaises(exception.UpdateReplace,
                           res._needs_update, tmpl, tmpl, prop, prop, res)
 
     def test_update_fail_missing_req_prop(self):
@@ -1406,6 +1406,42 @@ class ResourceTest(common.HeatTestCase):
         res.FnGetAtt('attr2')
         self.assertIn("Attribute attr2 is not of type Map", self.LOG.output)
 
+    def test_getatts(self):
+        tmpl = template.Template({
+            'heat_template_version': '2013-05-23',
+            'resources': {
+                'res': {
+                    'type': 'ResourceWithComplexAttributesType'
+                }
+            }
+        })
+        stack = parser.Stack(utils.dummy_context(), 'test', tmpl)
+        res = stack['res']
+        self.assertEqual({'list': ['foo', 'bar'],
+                          'flat_dict': {'key1': 'val1',
+                                        'key2': 'val2',
+                                        'key3': 'val3'},
+                          'nested_dict': {'list': [1, 2, 3],
+                                          'string': 'abc',
+                                          'dict': {'a': 1, 'b': 2, 'c': 3}},
+                          'none': None}, res.FnGetAtts())
+
+    def test_getatts_with_cache_data(self):
+        tmpl = template.Template({
+            'heat_template_version': '2013-05-23',
+            'resources': {
+                'res': {
+                    'type': 'ResourceWithPropsType'
+                }
+            }
+        })
+        stack = parser.Stack(utils.dummy_context(), 'test', tmpl,
+                             cache_data={
+                                 'res': {'attributes': {'Foo': 'res',
+                                                        'foo': 'res'}}})
+        res = stack['res']
+        self.assertEqual({'foo': 'res', 'Foo': 'res'}, res.FnGetAtts())
+
     def test_properties_data_stored_encrypted_decrypted_on_load(self):
         cfg.CONF.set_override('encrypt_parameters_and_properties', True)
 
@@ -1637,7 +1673,7 @@ class ResourceTest(common.HeatTestCase):
 
         res_data = {(1, True): {u'id': 4, u'name': 'A', 'attrs': {}},
                     (2, True): {u'id': 3, u'name': 'B', 'attrs': {}}}
-        ex = self.assertRaises(resource.UpdateInProgress,
+        ex = self.assertRaises(exception.UpdateInProgress,
                                res.update_convergence,
                                'template_key',
                                res_data, 'engine-007',
@@ -1708,7 +1744,7 @@ class ResourceTest(common.HeatTestCase):
         rs = resource_objects.Resource.get_obj(self.stack.context, res.id)
         rs.update_and_save({'engine_id': 'not-this'})
         self._assert_resource_lock(res.id, 'not-this', None)
-        ex = self.assertRaises(resource.UpdateInProgress,
+        ex = self.assertRaises(exception.UpdateInProgress,
                                res.delete_convergence,
                                1, {}, 'engine-007', self.dummy_timeout)
         msg = ("The resource %s is already being updated." %
@@ -1840,6 +1876,34 @@ class ResourceTest(common.HeatTestCase):
         timeout = 0  # to emulate timeout
         self.assertRaises(scheduler.Timeout, res.delete_convergence,
                           1, {}, 'engine-007', timeout)
+
+    @mock.patch.object(parser.Stack, 'load')
+    @mock.patch.object(resource.Resource, '_load_data')
+    @mock.patch.object(template.Template, 'load')
+    def test_load_loads_stack_with_cached_data(self, mock_tmpl_load,
+                                               mock_load_data,
+                                               mock_stack_load):
+        tmpl = template.Template({
+            'heat_template_version': '2013-05-23',
+            'resources': {
+                'res': {
+                    'type': 'GenericResourceType'
+                }
+            }
+        }, env=self.env)
+        stack = parser.Stack(utils.dummy_context(), 'test_stack',
+                             tmpl)
+        stack.store()
+        mock_tmpl_load.return_value = tmpl
+        res = stack['res']
+        res._store()
+        data = {'bar': {'atrr1': 'baz', 'attr2': 'baz2'}}
+        mock_stack_load.return_value = stack
+        resource.Resource.load(stack.context, res.id, True, data)
+        mock_stack_load.assert_called_once_with(stack.context,
+                                                stack.id,
+                                                cache_data=data)
+        self.assertTrue(mock_load_data.called)
 
 
 class ResourceAdoptTest(common.HeatTestCase):

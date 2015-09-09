@@ -1092,14 +1092,90 @@ class StackControllerTest(tools.ControllerTest, common.HeatTestCase):
     @mock.patch.object(stacks.stacks_view, 'format_stack')
     def test_preview_stack(self, mock_format, mock_call, mock_enforce):
         self._mock_enforce_setup(mock_enforce, 'preview', True)
-        body = {'stack_name': 'foo', 'template': {}}
-        req = self._get('/stacks/preview', params={})
+        body = {'stack_name': 'foo', 'template': {}, 'parameters': {}}
+        req = self._post('/stacks/preview', json.dumps(body))
         mock_call.return_value = {}
         mock_format.return_value = 'formatted_stack'
 
         result = self.controller.preview(req, tenant_id=self.tenant, body=body)
 
         self.assertEqual({'stack': 'formatted_stack'}, result)
+
+    @mock.patch.object(rpc_client.EngineClient, 'call')
+    @mock.patch.object(stacks.stacks_view, 'format_stack')
+    def test_preview_with_tags_timeout(self, mock_format, mock_call,
+                                       mock_enforce):
+        self._mock_enforce_setup(mock_enforce, 'preview', True)
+        identity = identifier.HeatIdentifier(self.tenant, 'wordpress', '1')
+        template = {u'Foo': u'bar'}
+        parameters = {u'InstanceType': u'm1.xlarge'}
+        body = {'template': template,
+                'stack_name': identity.stack_name,
+                'parameters': parameters,
+                'tags': 'tag1,tag2',
+                'timeout_mins': 30}
+
+        req = self._post('/stacks/preview', json.dumps(body))
+        mock_call.return_value = {}
+        mock_format.return_value = 'formatted_stack_preview'
+        response = self.controller.preview(req,
+                                           tenant_id=identity.tenant,
+                                           body=body)
+        rpc_client.EngineClient.call.assert_called_once_with(
+            req.context,
+            ('preview_stack',
+             {'stack_name': identity.stack_name,
+              'template': template,
+              'params': {'parameters': parameters,
+                         'encrypted_param_names': [],
+                         'parameter_defaults': {},
+                         'resource_registry': {}},
+              'files': {},
+              'args': {'timeout_mins': 30, 'tags': ['tag1', 'tag2']}})
+        )
+
+        self.assertEqual({'stack': 'formatted_stack_preview'}, response)
+
+    def test_preview_update_stack(self, mock_enforce):
+        self._mock_enforce_setup(mock_enforce, 'preview_update', True)
+        identity = identifier.HeatIdentifier(self.tenant, 'wordpress', '6')
+        template = {u'Foo': u'bar'}
+        parameters = {u'InstanceType': u'm1.xlarge'}
+        body = {'template': template,
+                'parameters': parameters,
+                'files': {},
+                'timeout_mins': 30}
+
+        req = self._put('/stacks/%(stack_name)s/%(stack_id)s/preview' %
+                        identity, json.dumps(body))
+        resource_changes = {'updated': [],
+                            'deleted': [],
+                            'unchanged': [],
+                            'added': [],
+                            'replaced': []}
+
+        self.m.StubOutWithMock(rpc_client.EngineClient, 'call')
+        rpc_client.EngineClient.call(
+            req.context,
+            ('preview_update_stack',
+             {'stack_identity': dict(identity),
+              'template': template,
+              'params': {'parameters': parameters,
+                         'encrypted_param_names': [],
+                         'parameter_defaults': {},
+                         'resource_registry': {}},
+              'files': {},
+              'args': {'timeout_mins': 30}}),
+            version='1.15'
+        ).AndReturn(resource_changes)
+        self.m.ReplayAll()
+
+        result = self.controller.preview_update(req, tenant_id=identity.tenant,
+                                                stack_name=identity.stack_name,
+                                                stack_id=identity.stack_id,
+                                                body=body)
+        self.assertEqual({'resource_changes': resource_changes}, result)
+        self.m.VerifyAll()
 
     def test_lookup(self, mock_enforce):
         self._mock_enforce_setup(mock_enforce, 'lookup', True)
@@ -1983,8 +2059,14 @@ class StackControllerTest(tools.ControllerTest, common.HeatTestCase):
 
         self.m.StubOutWithMock(rpc_client.EngineClient, 'call')
         rpc_client.EngineClient.call(
-            req.context, ('list_resource_types', {'support_status': None}),
-            version="1.1"
+            req.context,
+            ('list_resource_types',
+             {
+                 'support_status': None,
+                 'type_name': None,
+                 'heat_version': None
+             }),
+            version="1.16"
         ).AndReturn(engine_response)
         self.m.ReplayAll()
         response = self.controller.list_resource_types(req,
@@ -2001,8 +2083,12 @@ class StackControllerTest(tools.ControllerTest, common.HeatTestCase):
         rpc_client.EngineClient.call(
             req.context,
             ('list_resource_types',
-             {'support_status': None},
-             ), version="1.1"
+             {
+                 'support_status': None,
+                 'type_name': None,
+                 'heat_version': None
+             }),
+            version="1.16"
         ).AndRaise(tools.to_remote_error(error))
         self.m.ReplayAll()
 
@@ -2211,5 +2297,5 @@ class StackSerializerTest(common.HeatTestCase):
         response = webob.Response()
         response = self.serializer.create(response, result)
         self.assertEqual(201, response.status_int)
-        self.assertEqual('location', response.headers['Location'])
+        self.assertEqual(b'location', response.headers['Location'])
         self.assertEqual('application/json', response.headers['Content-Type'])

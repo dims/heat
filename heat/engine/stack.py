@@ -569,15 +569,16 @@ class Stack(collections.Mapping):
         refid, or None if not found
         '''
         for r in six.itervalues(self):
-            if r.state in (
-                    (r.INIT, r.COMPLETE),
-                    (r.CREATE, r.IN_PROGRESS),
-                    (r.CREATE, r.COMPLETE),
-                    (r.RESUME, r.IN_PROGRESS),
-                    (r.RESUME, r.COMPLETE),
-                    (r.UPDATE, r.IN_PROGRESS),
-                    (r.UPDATE, r.COMPLETE)) and r.FnGetRefId() == refid:
-                return r
+            if r.FnGetRefId() == refid:
+                if self.has_cache_data(r.name) or r.state in (
+                        (r.INIT, r.COMPLETE),
+                        (r.CREATE, r.IN_PROGRESS),
+                        (r.CREATE, r.COMPLETE),
+                        (r.RESUME, r.IN_PROGRESS),
+                        (r.RESUME, r.COMPLETE),
+                        (r.UPDATE, r.IN_PROGRESS),
+                        (r.UPDATE, r.COMPLETE)):
+                    return r
 
     def register_access_allowed_handler(self, credential_id, handler):
         '''
@@ -947,7 +948,11 @@ class Stack(collections.Mapping):
             # no back-up template for create action
             self.prev_raw_template_id = getattr(self.t, 'id', None)
 
+        # switch template and reset dependencies
         self.t = template
+        self.reset_dependencies()
+        self._resources = None
+
         previous_traversal = self.current_traversal
         self.current_traversal = uuidutils.generate_uuid()
         self.updated_time = datetime.datetime.utcnow()
@@ -1633,6 +1638,10 @@ class Stack(collections.Mapping):
     def cache_data_resource_attribute(self, resource_name, attribute_key):
         return self.cache_data.get(
             resource_name, {}).get('attrs', {}).get(attribute_key)
+
+    def cache_data_resource_all_attributes(self, resource_name):
+        attrs = self.cache_data.get(resource_name, {}).get('attributes', {})
+        return attrs
 
     def mark_complete(self, traversal_id):
         '''

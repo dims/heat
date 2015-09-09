@@ -329,13 +329,13 @@ class StackController(object):
         """
 
         data = InstantiationData(body)
-
+        args = self.prepare_args(data)
         result = self.rpc_client.preview_stack(req.context,
                                                data.stack_name(),
                                                data.template(),
                                                data.environment(),
                                                data.files(),
-                                               data.args())
+                                               args)
 
         formatted_stack = stacks_view.format_stack(req, result)
         return {'stack': formatted_stack}
@@ -459,6 +459,24 @@ class StackController(object):
         raise exc.HTTPAccepted()
 
     @util.identified_stack
+    def preview_update(self, req, identity, body):
+        """
+        Preview an update to an existing stack with a new template/parameters
+        """
+        data = InstantiationData(body)
+
+        args = self.prepare_args(data)
+        changes = self.rpc_client.preview_update_stack(
+            req.context,
+            identity,
+            data.template(),
+            data.environment(),
+            data.files(),
+            args)
+
+        return {'resource_changes': changes}
+
+    @util.identified_stack
     def delete(self, req, identity):
         """
         Delete the specified stack
@@ -506,9 +524,14 @@ class StackController(object):
         Returns a list of valid resource types that may be used in a template.
         """
         support_status = req.params.get('support_status')
+        type_name = req.params.get('name')
+        version = req.params.get('version')
         return {
             'resource_types':
-            self.rpc_client.list_resource_types(req.context, support_status)}
+            self.rpc_client.list_resource_types(req.context,
+                                                support_status=support_status,
+                                                type_name=type_name,
+                                                heat_version=version)}
 
     @util.policy_enforce
     def list_template_versions(self, req):
@@ -598,7 +621,7 @@ class StackSerializer(serializers.JSONResponseSerializer):
         self._populate_response_header(response,
                                        result['stack']['links'][0]['href'],
                                        201)
-        response.body = self.to_json(result)
+        response.body = six.b(self.to_json(result))
         return response
 
 

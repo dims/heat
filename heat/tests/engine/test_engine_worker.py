@@ -167,7 +167,7 @@ class CheckWorkflowUpdateTest(common.HeatTestCase):
     @mock.patch.object(resource.Resource, 'make_replacement')
     def test_is_update_traversal_raise_update_replace(
             self, mock_mr, mock_cru, mock_crc, mock_pcr, mock_csc, mock_cid):
-        mock_cru.side_effect = resource.UpdateReplace
+        mock_cru.side_effect = exception.UpdateReplace
         self.worker.check_resource(
             self.ctx, self.resource.id, self.stack.current_traversal, {},
             self.is_update, None)
@@ -183,7 +183,7 @@ class CheckWorkflowUpdateTest(common.HeatTestCase):
     @mock.patch.object(worker.WorkerService, '_try_steal_engine_lock')
     def test_is_update_traversal_raise_update_inprogress(
             self, mock_tsl, mock_cru, mock_crc, mock_pcr, mock_csc, mock_cid):
-        mock_cru.side_effect = resource.UpdateInProgress
+        mock_cru.side_effect = exception.UpdateInProgress
         self.worker.engine_id = 'some-thing-else'
         mock_tsl.return_value = True
         self.worker.check_resource(
@@ -501,7 +501,7 @@ class CheckWorkflowCleanupTest(common.HeatTestCase):
 
     def test_is_cleanup_traversal_raise_update_inprogress(
             self, mock_cru, mock_crc, mock_pcr, mock_csc, mock_cid):
-        mock_crc.side_effect = resource.UpdateInProgress
+        mock_crc.side_effect = exception.UpdateInProgress
         self.worker.check_resource(
             self.ctx, self.resource.id, self.stack.current_traversal, {},
             self.is_update, None)
@@ -520,12 +520,15 @@ class MiscMethodsTest(common.HeatTestCase):
         self.ctx = utils.dummy_context()
         self.stack = tools.get_stack(
             'check_workflow_create_stack', self.ctx,
-            template=tools.string_template_five, convergence=True)
+            template=tools.attr_cache_template, convergence=True)
         self.stack.converge_stack(self.stack.t)
         self.resource = self.stack['A']
 
     def test_construct_input_data_ok(self):
-        expected_input_data = {'attrs': {'value': None},
+        expected_input_data = {'attrs': {(u'flat_dict', u'key2'): 'val2',
+                                         (u'flat_dict', u'key3'): 'val3',
+                                         (u'nested_dict', u'dict', u'a'): 1,
+                                         (u'nested_dict', u'dict', u'b'): 2},
                                'id': mock.ANY,
                                'reference_id': 'A',
                                'name': 'A'}

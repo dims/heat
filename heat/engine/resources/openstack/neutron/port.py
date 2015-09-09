@@ -14,12 +14,12 @@
 from oslo_log import log as logging
 import six
 
+from heat.common import exception
 from heat.common.i18n import _
 from heat.common.i18n import _LW
 from heat.engine import attributes
 from heat.engine import constraints
 from heat.engine import properties
-from heat.engine import resource
 from heat.engine.resources.openstack.neutron import neutron
 from heat.engine.resources.openstack.neutron import subnet
 from heat.engine import support
@@ -343,7 +343,7 @@ class Port(neutron.NeutronResource):
         self.client_plugin().resolve_network(props, self.NETWORK, 'network_id')
         self._prepare_port_properties(props)
 
-        port = self.neutron().create_port({'port': props})['port']
+        port = self.client().create_port({'port': props})['port']
         self.resource_id_set(port['id'])
 
     def _prepare_port_properties(self, props, prepare_for_update=False):
@@ -380,7 +380,7 @@ class Port(neutron.NeutronResource):
         del(props[self.REPLACEMENT_POLICY])
 
     def _show_resource(self):
-        return self.neutron().show_port(
+        return self.client().show_port(
             self.resource_id)['port']
 
     def check_create_complete(self, *args):
@@ -388,9 +388,8 @@ class Port(neutron.NeutronResource):
         return self.is_built(attributes)
 
     def handle_delete(self):
-        client = self.neutron()
         try:
-            client.delete_port(self.resource_id)
+            self.client().delete_port(self.resource_id)
         except Exception as ex:
             self.client_plugin().ignore_not_found(ex)
         else:
@@ -404,7 +403,7 @@ class Port(neutron.NeutronResource):
                 for fixed_ip in fixed_ips:
                     subnet_id = fixed_ip.get('subnet_id')
                     if subnet_id:
-                        subnets.append(self.neutron().show_subnet(
+                        subnets.append(self.client().show_subnet(
                             subnet_id)['subnet'])
             except Exception as ex:
                 LOG.warn(_LW("Failed to fetch resource attributes: %s"), ex)
@@ -413,20 +412,21 @@ class Port(neutron.NeutronResource):
         return super(Port, self)._resolve_attribute(name)
 
     def _needs_update(self, after, before, after_props, before_props,
-                      prev_resource):
+                      prev_resource, check_init_complete=True):
 
         if after_props.get(self.REPLACEMENT_POLICY) == 'REPLACE_ALWAYS':
-            raise resource.UpdateReplace(self.name)
+            raise exception.UpdateReplace(self.name)
 
         return super(Port, self)._needs_update(
-            after, before, after_props, before_props, prev_resource)
+            after, before, after_props, before_props, prev_resource,
+            check_init_complete)
 
     def handle_update(self, json_snippet, tmpl_diff, prop_diff):
         props = self.prepare_update_properties(json_snippet)
 
         self._prepare_port_properties(props, prepare_for_update=True)
         LOG.debug('updating port with %s' % props)
-        self.neutron().update_port(self.resource_id, {'port': props})
+        self.client().update_port(self.resource_id, {'port': props})
 
     def check_update_complete(self, *args):
         attributes = self._show_resource()

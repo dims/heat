@@ -35,6 +35,8 @@ class EngineClient(object):
         1.12 - Add with_detail option for stack resources list
         1.13 - Add support for template functions list
         1.14 - Add cancel_with_rollback option to stack_cancel_update
+        1.15 - Add preview_update_stack() call
+        1.16 - Adds version, type_name to list_resource_types()
     '''
 
     BASE_RPC_API_VERSION = '1.0'
@@ -264,6 +266,32 @@ class EngineClient(object):
                                              files=files,
                                              args=args))
 
+    def preview_update_stack(self, ctxt, stack_identity, template, params,
+                             files, args):
+        """
+        The preview_update_stack method returns the resources that would be
+        changed in an update of an existing stack based on the provided
+        template and parameters.
+
+        Requires RPC version 1.15 or above.
+
+        :param ctxt: RPC context.
+        :param stack_identity: Name of the stack you wish to update.
+        :param template: New template for the stack.
+        :param params: Stack Input Params/Environment
+        :param files: files referenced from the environment.
+        :param args: Request parameters/args passed from API
+        """
+        return self.call(ctxt,
+                         self.make_msg('preview_update_stack',
+                                       stack_identity=stack_identity,
+                                       template=template,
+                                       params=params,
+                                       files=files,
+                                       args=args,
+                                       ),
+                         version='1.15')
+
     def validate_template(self, ctxt, template, params=None):
         """
         The validate_template method uses the stack parser to check
@@ -321,15 +349,24 @@ class EngineClient(object):
                          self.make_msg('abandon_stack',
                                        stack_identity=stack_identity))
 
-    def list_resource_types(self, ctxt, support_status=None):
+    def list_resource_types(self,
+                            ctxt,
+                            support_status=None,
+                            type_name=None,
+                            heat_version=None):
         """
         Get a list of valid resource types.
 
         :param ctxt: RPC context.
+        :param support_status: Support status of resource type
+        :param type_name: Resource type's name (regular expression allowed)
+        :param version: Heat version
         """
         return self.call(ctxt, self.make_msg('list_resource_types',
-                                             support_status=support_status),
-                         version='1.1')
+                                             support_status=support_status,
+                                             type_name=type_name,
+                                             heat_version=heat_version),
+                         version='1.16')
 
     def list_template_versions(self, ctxt):
         """

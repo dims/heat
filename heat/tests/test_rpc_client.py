@@ -175,6 +175,14 @@ class EngineRpcAPITestCase(common.HeatTestCase):
                               files={},
                               args=mock.ANY)
 
+    def test_preview_update_stack(self):
+        self._test_engine_api('preview_update_stack', 'call',
+                              stack_identity=self.identity,
+                              template={u'Foo': u'bar'},
+                              params={u'InstanceType': u'm1.xlarge'},
+                              files={},
+                              args=mock.ANY)
+
     def test_get_template(self):
         self._test_engine_api('get_template', 'call',
                               stack_identity=self.identity)
@@ -193,8 +201,12 @@ class EngineRpcAPITestCase(common.HeatTestCase):
                               params={u'Egg': u'spam'})
 
     def test_list_resource_types(self):
-        self._test_engine_api('list_resource_types', 'call',
-                              support_status=None, version='1.1')
+        self._test_engine_api('list_resource_types',
+                              'call',
+                              support_status=None,
+                              type_name=None,
+                              heat_version=None,
+                              version='1.16')
 
     def test_resource_schema(self):
         self._test_engine_api('resource_schema', 'call', type_name="TYPE")

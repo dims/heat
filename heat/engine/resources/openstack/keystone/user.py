@@ -14,11 +14,13 @@
 from heat.common.i18n import _
 from heat.engine import constraints
 from heat.engine import properties
+from heat.engine import resource
 from heat.engine.resources.openstack.keystone import role_assignments
 from heat.engine import support
 
 
-class KeystoneUser(role_assignments.KeystoneRoleAssignment):
+class KeystoneUser(resource.Resource,
+                   role_assignments.KeystoneRoleAssignmentMixin):
     """Heat Template Resource for Keystone User."""
 
     support_status = support.SupportStatus(
@@ -26,6 +28,8 @@ class KeystoneUser(role_assignments.KeystoneRoleAssignment):
         message=_('Supported versions: keystone v3'))
 
     default_client_name = 'keystone'
+
+    entity = 'users'
 
     PROPERTIES = (
         NAME, DOMAIN, DESCRIPTION, ENABLED, EMAIL, PASSWORD,
@@ -88,8 +92,15 @@ class KeystoneUser(role_assignments.KeystoneRoleAssignment):
         )
     }
 
-    (properties_schema.update(
-        role_assignments.KeystoneRoleAssignment.properties_schema))
+    properties_schema.update(
+        role_assignments.KeystoneRoleAssignmentMixin.mixin_properties_schema)
+
+    def validate(self):
+        super(KeystoneUser, self).validate()
+        self.validate_assignment_properties()
+
+    def client(self):
+        return super(KeystoneUser, self).client().client
 
     def _create_user(self,
                      user_name,
@@ -104,7 +115,7 @@ class KeystoneUser(role_assignments.KeystoneRoleAssignment):
             default_project = (self.client_plugin().
                                get_project_id(default_project))
 
-        return self.client().client.users.create(
+        return self.client().users.create(
             name=user_name,
             domain=domain,
             description=description,
@@ -114,7 +125,7 @@ class KeystoneUser(role_assignments.KeystoneRoleAssignment):
             default_project=default_project)
 
     def _delete_user(self, user_id):
-        return self.client().client.users.delete(user_id)
+        return self.client().users.delete(user_id)
 
     def _update_user(self,
                      user_id,
@@ -145,7 +156,7 @@ class KeystoneUser(role_assignments.KeystoneRoleAssignment):
 
         values['domain'] = domain
 
-        return self.client().client.users.update(**values)
+        return self.client().users.update(**values)
 
     def _add_user_to_groups(self, user_id, groups):
         if groups is not None:
@@ -153,8 +164,8 @@ class KeystoneUser(role_assignments.KeystoneRoleAssignment):
                          for group in groups]
 
             for group_id in group_ids:
-                self.client().client.users.add_to_group(user_id,
-                                                        group_id)
+                self.client().users.add_to_group(user_id,
+                                                 group_id)
 
     def _remove_user_from_groups(self, user_id, groups):
         if groups is not None:
@@ -162,8 +173,8 @@ class KeystoneUser(role_assignments.KeystoneRoleAssignment):
                          for group in groups]
 
             for group_id in group_ids:
-                self.client().client.users.remove_from_group(user_id,
-                                                             group_id)
+                self.client().users.remove_from_group(user_id,
+                                                      group_id)
 
     def _find_diff(self, updated_prps, stored_prps):
         new_group_ids = [self.client_plugin().get_group_id(group)
@@ -203,8 +214,7 @@ class KeystoneUser(role_assignments.KeystoneRoleAssignment):
 
         self._add_user_to_groups(user.id, groups)
 
-        super(KeystoneUser, self).handle_create(user_id=user.id,
-                                                group_id=None)
+        self.create_assignment(user_id=user.id)
 
     def handle_update(self, json_snippet, tmpl_diff, prop_diff):
         name = prop_diff.get(self.NAME) or self.physical_resource_name()
@@ -238,23 +248,19 @@ class KeystoneUser(role_assignments.KeystoneRoleAssignment):
         if len(removed_group_ids) > 0:
             self._remove_user_from_groups(self.resource_id, removed_group_ids)
 
-        super(KeystoneUser, self).handle_update(user_id=self.resource_id,
-                                                group_id=None,
-                                                prop_diff=prop_diff)
+        self.update_assignment(prop_diff=prop_diff, user_id=self.resource_id)
 
     def handle_delete(self):
         if self.resource_id is not None:
             try:
-                super(KeystoneUser, self).handle_delete(
-                    user_id=self.resource_id,
-                    group_id=None)
+                self.delete_assignment(user_id=self.resource_id)
 
-                if self._stored_properties_data[self.GROUPS] is not None:
+                if self._stored_properties_data.get(self.GROUPS) is not None:
                     self._remove_user_from_groups(
                         self.resource_id,
                         [self.client_plugin().get_group_id(group)
                          for group in
-                         self._stored_properties_data[self.GROUPS]])
+                         self._stored_properties_data.get(self.GROUPS)])
 
                 self._delete_user(user_id=self.resource_id)
             except Exception as ex:

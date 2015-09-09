@@ -30,7 +30,6 @@ from heat.engine.clients.os import nova
 from heat.engine.clients.os import swift
 from heat.engine.clients.os import zaqar
 from heat.engine import environment
-from heat.engine import resource
 from heat.engine.resources.openstack.nova import server as servers
 from heat.engine.resources import scheduler_hints as sh
 from heat.engine import scheduler
@@ -513,7 +512,7 @@ class ServersTest(common.HeatTestCase):
         self.fc.servers.get(server.resource_id).AndReturn(return_server)
         self.m.ReplayAll()
 
-        e = self.assertRaises(resource.ResourceUnknownStatus,
+        e = self.assertRaises(exception.ResourceUnknownStatus,
                               server.check_create_complete,
                               server.resource_id)
         self.assertEqual('Server is not active - Unknown status BOGUS due to '
@@ -536,7 +535,7 @@ class ServersTest(common.HeatTestCase):
         self.fc.servers.get(server.resource_id).AndReturn(return_server)
         self.m.ReplayAll()
 
-        e = self.assertRaises(resource.ResourceInError,
+        e = self.assertRaises(exception.ResourceInError,
                               server.check_create_complete,
                               server.resource_id)
         self.assertEqual(
@@ -656,19 +655,20 @@ class ServersTest(common.HeatTestCase):
         scheduler.TaskRunner(server.create)()
         self.m.VerifyAll()
 
-    def test_server_create_software_config(self):
+    def _server_create_software_config(self, md=None):
         return_server = self.fc.servers.list()[1]
         stack_name = 'software_config_s'
         (tmpl, stack) = self._setup_test_stack(stack_name)
 
         tmpl['Resources']['WebServer']['Properties'][
             'user_data_format'] = 'SOFTWARE_CONFIG'
+        if md is not None:
+            tmpl['Resources']['WebServer']['Metadata'] = md
 
         stack.stack_user_project_id = '8888'
         resource_defns = tmpl.resource_definitions(stack)
         server = servers.Server('WebServer',
                                 resource_defns['WebServer'], stack)
-
         self.m.StubOutWithMock(nova.NovaClientPlugin, '_create')
         self.m.StubOutWithMock(server, 'heat')
 
@@ -699,6 +699,11 @@ class ServersTest(common.HeatTestCase):
         self.assertTrue(stack.access_allowed('4567', 'WebServer'))
         self.assertFalse(stack.access_allowed('45678', 'WebServer'))
         self.assertFalse(stack.access_allowed('4567', 'wWebServer'))
+        self.m.VerifyAll()
+        return server
+
+    def test_server_create_software_config(self):
+        server = self._server_create_software_config()
 
         self.assertEqual({
             'os-collect-config': {
@@ -713,15 +718,25 @@ class ServersTest(common.HeatTestCase):
             'deployments': []
         }, server.metadata_get())
 
-        resource_defns = tmpl.resource_definitions(stack)
-        created_server = servers.Server('WebServer',
-                                        resource_defns['WebServer'], stack)
-        self.assertEqual('4567', created_server.access_key)
-        self.assertTrue(stack.access_allowed('4567', 'WebServer'))
+    def test_server_create_software_config_metadata(self):
+        md = {'os-collect-config': {'polling_interval': 10}}
+        server = self._server_create_software_config(md=md)
 
-        self.m.VerifyAll()
+        self.assertEqual({
+            'os-collect-config': {
+                'cfn': {
+                    'access_key_id': '4567',
+                    'metadata_url': '/v1/',
+                    'path': 'WebServer.Metadata',
+                    'secret_access_key': '8901',
+                    'stack_name': 'software_config_s'
+                },
+                'polling_interval': 10
+            },
+            'deployments': []
+        }, server.metadata_get())
 
-    def test_server_create_software_config_poll_heat(self):
+    def _server_create_software_config_poll_heat(self, md=None):
         return_server = self.fc.servers.list()[1]
         stack_name = 'software_config_s'
         (tmpl, stack) = self._setup_test_stack(stack_name)
@@ -729,6 +744,8 @@ class ServersTest(common.HeatTestCase):
         props = tmpl.t['Resources']['WebServer']['Properties']
         props['user_data_format'] = 'SOFTWARE_CONFIG'
         props['software_config_transport'] = 'POLL_SERVER_HEAT'
+        if md is not None:
+            tmpl.t['Resources']['WebServer']['Metadata'] = md
 
         resource_defns = tmpl.resource_definitions(stack)
         server = servers.Server('WebServer',
@@ -754,13 +771,16 @@ class ServersTest(common.HeatTestCase):
         self.m.ReplayAll()
         scheduler.TaskRunner(server.create)()
 
-        # self.assertEqual('4567', server.access_key)
-        # self.assertEqual('8901', server.secret_key)
         self.assertEqual('1234', server._get_user_id())
 
         self.assertTrue(stack.access_allowed('1234', 'WebServer'))
         self.assertFalse(stack.access_allowed('45678', 'WebServer'))
         self.assertFalse(stack.access_allowed('4567', 'wWebServer'))
+        self.m.VerifyAll()
+        return stack, server
+
+    def test_server_create_software_config_poll_heat(self):
+        stack, server = self._server_create_software_config_poll_heat()
 
         self.assertEqual({
             'os-collect-config': {
@@ -776,15 +796,26 @@ class ServersTest(common.HeatTestCase):
             'deployments': []
         }, server.metadata_get())
 
-        resource_defns = tmpl.resource_definitions(stack)
-        created_server = servers.Server('WebServer',
-                                        resource_defns['WebServer'], stack)
-        self.assertEqual('1234', created_server._get_user_id())
-        self.assertTrue(stack.access_allowed('1234', 'WebServer'))
+    def test_server_create_software_config_poll_heat_metadata(self):
+        md = {'os-collect-config': {'polling_interval': 10}}
+        stack, server = self._server_create_software_config_poll_heat(md=md)
 
-        self.m.VerifyAll()
+        self.assertEqual({
+            'os-collect-config': {
+                'heat': {
+                    'auth_url': 'http://server.test:5000/v2.0',
+                    'password': server.password,
+                    'project_id': '8888',
+                    'resource_name': 'WebServer',
+                    'stack_id': 'software_config_s/%s' % stack.id,
+                    'user_id': '1234'
+                },
+                'polling_interval': 10
+            },
+            'deployments': []
+        }, server.metadata_get())
 
-    def test_server_create_software_config_poll_temp_url(self):
+    def _server_create_software_config_poll_temp_url(self, md=None):
         return_server = self.fc.servers.list()[1]
         stack_name = 'software_config_s'
         (tmpl, stack) = self._setup_test_stack(stack_name)
@@ -792,6 +823,8 @@ class ServersTest(common.HeatTestCase):
         props = tmpl.t['Resources']['WebServer']['Properties']
         props['user_data_format'] = 'SOFTWARE_CONFIG'
         props['software_config_transport'] = 'POLL_TEMP_URL'
+        if md is not None:
+            tmpl.t['Resources']['WebServer']['Metadata'] = md
 
         resource_defns = tmpl.resource_definitions(stack)
         server = servers.Server('WebServer',
@@ -838,6 +871,19 @@ class ServersTest(common.HeatTestCase):
         self.assertEqual(test_path, urlparse.urlparse(metadata_put_url).path)
         self.assertEqual(test_path, urlparse.urlparse(metadata_url).path)
 
+        sc.head_container.return_value = {'x-container-object-count': '0'}
+        server._delete_temp_url()
+        sc.delete_object.assert_called_once_with(container_name, object_name)
+        sc.head_container.assert_called_once_with(container_name)
+        sc.delete_container.assert_called_once_with(container_name)
+
+        self.m.VerifyAll()
+        return metadata_url, server
+
+    def test_server_create_software_config_poll_temp_url(self):
+        metadata_url, server = \
+            self._server_create_software_config_poll_temp_url()
+
         self.assertEqual({
             'os-collect-config': {
                 'request': {
@@ -847,15 +893,22 @@ class ServersTest(common.HeatTestCase):
             'deployments': []
         }, server.metadata_get())
 
-        sc.head_container.return_value = {'x-container-object-count': '0'}
-        server._delete_temp_url()
-        sc.delete_object.assert_called_once_with(container_name, object_name)
-        sc.head_container.assert_called_once_with(container_name)
-        sc.delete_container.assert_called_once_with(container_name)
+    def test_server_create_software_config_poll_temp_url_metadata(self):
+        md = {'os-collect-config': {'polling_interval': 10}}
+        metadata_url, server = \
+            self._server_create_software_config_poll_temp_url(md=md)
 
-        self.m.VerifyAll()
+        self.assertEqual({
+            'os-collect-config': {
+                'request': {
+                    'metadata_url': metadata_url
+                },
+                'polling_interval': 10
+            },
+            'deployments': []
+        }, server.metadata_get())
 
-    def test_server_create_software_config_zaqar(self):
+    def _server_create_software_config_zaqar(self, md=None):
         return_server = self.fc.servers.list()[1]
         stack_name = 'software_config_s'
         (tmpl, stack) = self._setup_test_stack(stack_name)
@@ -863,6 +916,8 @@ class ServersTest(common.HeatTestCase):
         props = tmpl.t['Resources']['WebServer']['Properties']
         props['user_data_format'] = 'SOFTWARE_CONFIG'
         props['software_config_transport'] = 'ZAQAR_MESSAGE'
+        if md is not None:
+            tmpl.t['Resources']['WebServer']['Metadata'] = md
 
         resource_defns = tmpl.resource_definitions(stack)
         server = servers.Server('WebServer',
@@ -898,6 +953,22 @@ class ServersTest(common.HeatTestCase):
         queue_id = md['os-collect-config']['zaqar']['queue_id']
         self.assertEqual(queue_id, metadata_queue_id)
 
+        zc.queue.assert_called_once_with(queue_id)
+        queue.post.assert_called_once_with(
+            {'body': server.metadata_get(), 'ttl': 3600})
+
+        zc.queue.reset_mock()
+
+        server._delete_queue()
+
+        zc.queue.assert_called_once_with(queue_id)
+        zc.queue(queue_id).delete.assert_called_once_with()
+
+        self.m.VerifyAll()
+        return queue_id, server
+
+    def test_server_create_software_config_zaqar(self):
+        queue_id, server = self._server_create_software_config_zaqar()
         self.assertEqual({
             'os-collect-config': {
                 'zaqar': {
@@ -911,18 +982,22 @@ class ServersTest(common.HeatTestCase):
             'deployments': []
         }, server.metadata_get())
 
-        zc.queue.assert_called_once_with(queue_id)
-        queue.post.assert_called_once_with(
-            {'body': server.metadata_get(), 'ttl': 3600})
-
-        zc.queue.reset_mock()
-
-        server._delete_queue()
-
-        zc.queue.assert_called_once_with(queue_id)
-        zc.queue(queue_id).delete.assert_called_once_with()
-
-        self.m.VerifyAll()
+    def test_server_create_software_config_zaqar_metadata(self):
+        md = {'os-collect-config': {'polling_interval': 10}}
+        queue_id, server = self._server_create_software_config_zaqar(md=md)
+        self.assertEqual({
+            'os-collect-config': {
+                'zaqar': {
+                    'user_id': '1234',
+                    'password': server.password,
+                    'auth_url': 'http://server.test:5000/v2.0',
+                    'project_id': '8888',
+                    'queue_id': queue_id
+                },
+                'polling_interval': 10
+            },
+            'deployments': []
+        }, server.metadata_get())
 
     @mock.patch.object(nova.NovaClientPlugin, '_create')
     def test_server_create_default_admin_pass(self, mock_client):
@@ -1742,7 +1817,7 @@ class ServersTest(common.HeatTestCase):
         update_template = copy.deepcopy(server.t)
         update_template['Properties']['flavor'] = 'm1.small'
         updater = scheduler.TaskRunner(server.update, update_template)
-        self.assertRaises(resource.UpdateReplace, updater)
+        self.assertRaises(exception.UpdateReplace, updater)
 
     def test_server_update_server_flavor_policy_update(self):
         stack_name = 'update_flvpol'
@@ -1763,7 +1838,7 @@ class ServersTest(common.HeatTestCase):
         update_template['Properties']['flavor_update_policy'] = 'REPLACE'
         update_template['Properties']['flavor'] = 'm1.small'
         updater = scheduler.TaskRunner(server.update, update_template)
-        self.assertRaises(resource.UpdateReplace, updater)
+        self.assertRaises(exception.UpdateReplace, updater)
 
     def test_server_update_image_replace(self):
         stack_name = 'update_imgrep'
@@ -1784,7 +1859,7 @@ class ServersTest(common.HeatTestCase):
         update_template = copy.deepcopy(server.t)
         update_template['Properties']['image'] = image_id
         updater = scheduler.TaskRunner(server.update, update_template)
-        self.assertRaises(resource.UpdateReplace, updater)
+        self.assertRaises(exception.UpdateReplace, updater)
 
     def _test_server_update_image_rebuild(self, status, policy='REBUILD',
                                           password=None):
@@ -1914,7 +1989,7 @@ class ServersTest(common.HeatTestCase):
         update_template['Properties']['image'] = 'mustreplace'
         update_template['Properties']['image_update_policy'] = 'REPLACE'
         updater = scheduler.TaskRunner(server.update, update_template)
-        self.assertRaises(resource.UpdateReplace, updater)
+        self.assertRaises(exception.UpdateReplace, updater)
 
     def test_server_status_build(self):
         return_server = self.fc.servers.list()[0]
@@ -2040,7 +2115,7 @@ class ServersTest(common.HeatTestCase):
 
         ex = self.assertRaises(exception.ResourceFailure,
                                scheduler.TaskRunner(server.suspend))
-        self.assertIsInstance(ex.exc, resource.ResourceUnknownStatus)
+        self.assertIsInstance(ex.exc, exception.ResourceUnknownStatus)
         self.assertEqual('Suspend of server %s failed - '
                          'Unknown status TRANSMOGRIFIED '
                          'due to "Unknown"' % return_server.name,
@@ -2195,12 +2270,13 @@ class ServersTest(common.HeatTestCase):
 
         self.assertIsNone(server._build_nics([]))
         self.assertIsNone(server._build_nics(None))
-        self.assertEqual([{'port-id': 'aaaabbbb'},
-                          {'v4-fixed-ip': '192.0.2.0'}],
+        self.assertEqual([{'port-id': 'aaaabbbb', 'net-id': None},
+                          {'v4-fixed-ip': '192.0.2.0', 'net-id': None}],
                          server._build_nics([{'port': 'aaaabbbb'},
                                              {'fixed_ip': '192.0.2.0'}]))
-        self.assertEqual([{'port-id': 'aaaabbbb'},
-                          {'v6-fixed-ip': '2002::2'}],
+
+        self.assertEqual([{'port-id': 'aaaabbbb', 'net-id': None},
+                          {'v6-fixed-ip': '2002::2', 'net-id': None}],
                          server._build_nics([{'port': 'aaaabbbb'},
                                              {'fixed_ip': '2002::2'}]))
         self.patchobject(neutron.NeutronClientPlugin, 'resolve_network',
@@ -2792,8 +2868,10 @@ class ServersTest(common.HeatTestCase):
         scheduler.TaskRunner(server.create)()
         self.m.VerifyAll()
 
-    def create_old_net(self, port=None, net=None, ip=None, uuid=None):
-        return {'port': port, 'network': net, 'fixed_ip': ip, 'uuid': uuid}
+    def create_old_net(self, port=None, net=None, ip=None, uuid=None,
+                       subnet=None):
+        return {'port': port, 'network': net, 'fixed_ip': ip, 'uuid': uuid,
+                'subnet': subnet}
 
     def create_fake_iface(self, port, net, ip):
         class fake_interface(object):
@@ -2828,6 +2906,10 @@ class ServersTest(common.HeatTestCase):
         net_id = server._get_network_id(net)
         self.assertEqual('f3ef5d2f-d7ba-4b27-af66-58ca0b81e032', net_id)
 
+        net = {'network': '', 'fixed_ip': '1.2.3.4'}
+        net_id = server._get_network_id(net)
+        self.assertEqual(None, net_id)
+
     def test_get_network_id_nova(self):
         return_server = self.fc.servers.list()[3]
         server = self._create_test_server(return_server, 'networks_update')
@@ -2854,7 +2936,7 @@ class ServersTest(common.HeatTestCase):
         net_id = server._get_network_id(net)
         self.assertEqual('f3ef5d2f-d7ba-4b27-af66-58ca0b81e032', net_id)
 
-    def test_get_network_matches_no_matching(self):
+    def test_exclude_not_updated_networks_no_matching(self):
         return_server = self.fc.servers.list()[3]
         server = self._create_test_server(return_server, 'networks_update')
 
@@ -2872,15 +2954,16 @@ class ServersTest(common.HeatTestCase):
             new_nets_copy = copy.deepcopy(new_nets)
             old_nets_copy = copy.deepcopy(old_nets)
             for net in new_nets_copy:
-                for key in ('port', 'network', 'fixed_ip', 'uuid'):
+                for key in ('port', 'network', 'fixed_ip', 'uuid', 'subnet'):
                     net.setdefault(key)
 
-            matched_nets = server._get_network_matches(old_nets, new_nets)
+            matched_nets = server._exclude_not_updated_networks(old_nets,
+                                                                new_nets)
             self.assertEqual([], matched_nets)
             self.assertEqual(old_nets_copy, old_nets)
             self.assertEqual(new_nets_copy, new_nets)
 
-    def test_get_network_matches_success(self):
+    def test_exclude_not_updated_networks_success(self):
         return_server = self.fc.servers.list()[3]
         server = self._create_test_server(return_server, 'networks_update')
 
@@ -2901,15 +2984,15 @@ class ServersTest(common.HeatTestCase):
         new_nets_copy = copy.deepcopy(new_nets)
         old_nets_copy = copy.deepcopy(old_nets)
         for net in new_nets_copy:
-            for key in ('port', 'network', 'fixed_ip', 'uuid'):
+            for key in ('port', 'network', 'fixed_ip', 'uuid', 'subnet'):
                 net.setdefault(key)
 
-        matched_nets = server._get_network_matches(old_nets, new_nets)
+        matched_nets = server._exclude_not_updated_networks(old_nets, new_nets)
         self.assertEqual(old_nets_copy[:-1], matched_nets)
         self.assertEqual([old_nets_copy[2]], old_nets)
         self.assertEqual([new_nets_copy[2]], new_nets)
 
-    def test_get_network_matches_not_to_update(self):
+    def test_exclude_not_updated_networks_nothing_for_update(self):
         return_server = self.fc.servers.list()[3]
         server = self._create_test_server(return_server, 'networks_update')
 
@@ -2923,10 +3006,11 @@ class ServersTest(common.HeatTestCase):
             {'network': 'f3ef5d2f-d7ba-4b27-af66-58ca0b81e032',
              'fixed_ip': None,
              'port': None,
-             'uuid': None}]
+             'uuid': None,
+             'subnet': None}]
         new_nets_copy = copy.deepcopy(new_nets)
 
-        matched_nets = server._get_network_matches(old_nets, new_nets)
+        matched_nets = server._exclude_not_updated_networks(old_nets, new_nets)
         self.assertEqual(new_nets_copy, matched_nets)
         self.assertEqual([], old_nets)
         self.assertEqual([], new_nets)
@@ -2935,7 +3019,7 @@ class ServersTest(common.HeatTestCase):
         return_server = self.fc.servers.list()[3]
         server = self._create_test_server(return_server, 'networks_update')
 
-        # old order 0 1 2 3 4 5
+        # old order 0 1 2 3 4
         nets = [
             self.create_old_net(port='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
             self.create_old_net(net='gggggggg-1111-1111-1111-gggggggggggg',
@@ -2943,12 +3027,9 @@ class ServersTest(common.HeatTestCase):
             self.create_old_net(net='gggggggg-1111-1111-1111-gggggggggggg'),
             self.create_old_net(port='dddddddd-dddd-dddd-dddd-dddddddddddd'),
             self.create_old_net(uuid='gggggggg-1111-1111-1111-gggggggggggg',
-                                ip='5.6.7.8'),
-            self.create_old_net(uuid='0da8adbf-a7e2-4c59-a511-96b03d2da0d7')]
-        # new order 5 2 3 0 1 4
+                                ip='5.6.7.8')]
+        # new order 2 3 0 1 4
         interfaces = [
-            self.create_fake_iface('ffffffff-ffff-ffff-ffff-ffffffffffff',
-                                   nets[5]['uuid'], '10.0.0.10'),
             self.create_fake_iface('cccccccc-cccc-cccc-cccc-cccccccccccc',
                                    nets[2]['network'], '10.0.0.11'),
             self.create_fake_iface(nets[3]['port'],
@@ -2966,27 +3047,28 @@ class ServersTest(common.HeatTestCase):
             {'port': 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
              'network': None,
              'fixed_ip': None,
-             'uuid': None},
+             'uuid': None,
+             'subnet': None},
             {'port': 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
              'network': 'gggggggg-1111-1111-1111-gggggggggggg',
              'fixed_ip': '1.2.3.4',
-             'uuid': None},
+             'uuid': None,
+             'subnet': None},
             {'port': 'cccccccc-cccc-cccc-cccc-cccccccccccc',
              'network': 'gggggggg-1111-1111-1111-gggggggggggg',
              'fixed_ip': None,
-             'uuid': None},
+             'uuid': None,
+             'subnet': None},
             {'port': 'dddddddd-dddd-dddd-dddd-dddddddddddd',
              'network': None,
              'fixed_ip': None,
-             'uuid': None},
+             'uuid': None,
+             'subnet': None},
             {'port': 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee',
              'uuid': 'gggggggg-1111-1111-1111-gggggggggggg',
              'fixed_ip': '5.6.7.8',
-             'network': None},
-            {'port': 'ffffffff-ffff-ffff-ffff-ffffffffffff',
              'network': None,
-             'fixed_ip': None,
-             'uuid': '0da8adbf-a7e2-4c59-a511-96b03d2da0d7'}]
+             'subnet': None}]
 
         self.patchobject(neutron.NeutronClientPlugin, 'resolve_network',
                          return_value='gggggggg-1111-1111-1111-gggggggggggg')
@@ -3094,6 +3176,9 @@ class ServersTest(common.HeatTestCase):
         self.m.StubOutWithMock(return_server, 'interface_detach')
         return_server.interface_detach(
             'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa').AndReturn(None)
+
+        self.patchobject(neutron.NeutronClientPlugin, 'resolve_network',
+                         return_value=None)
 
         self.m.StubOutWithMock(return_server, 'interface_attach')
         return_server.interface_attach(
@@ -3343,7 +3428,7 @@ class ServersTest(common.HeatTestCase):
 
         # update
         updater = scheduler.TaskRunner(server.update, update_template)
-        self.assertRaises(resource.UpdateReplace, updater)
+        self.assertRaises(exception.UpdateReplace, updater)
 
         self.m.VerifyAll()
 

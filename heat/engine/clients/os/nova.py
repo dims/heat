@@ -34,7 +34,6 @@ from heat.common.i18n import _LI
 from heat.common.i18n import _LW
 from heat.engine.clients import client_plugin
 from heat.engine import constraints
-from heat.engine import resource
 
 LOG = logging.getLogger(__name__)
 
@@ -66,7 +65,7 @@ class NovaClientPlugin(client_plugin.ClientPlugin):
         extensions = nc.discover_extensions(NOVACLIENT_VERSION)
 
         args = {
-            'project_id': self.context.tenant,
+            'project_id': self.context.tenant_id,
             'auth_url': self.context.auth_url,
             'auth_token': self.auth_token,
             'service_type': self.COMPUTE,
@@ -215,14 +214,14 @@ class NovaClientPlugin(client_plugin.ClientPlugin):
             return True
         elif status == 'ERROR':
             fault = getattr(server, 'fault', {})
-            raise resource.ResourceInError(
+            raise exception.ResourceInError(
                 resource_status=status,
                 status_reason=_("Message: %(message)s, Code: %(code)s") % {
                     'message': fault.get('message', _('Unknown')),
                     'code': fault.get('code', _('Unknown'))
                 })
         else:
-            raise resource.ResourceUnknownStatus(
+            raise exception.ResourceUnknownStatus(
                 resource_status=server.status,
                 result=_('%s is not active') % res_name)
 
@@ -406,8 +405,8 @@ echo -e '%s\tALL=(ALL)\tNOPASSWD: ALL' >> /etc/sudoers
                        "%(message)s") % dict(name=server.name,
                                              code=code,
                                              message=message)
-            raise resource.ResourceInError(resource_status=status,
-                                           status_reason=errmsg)
+            raise exception.ResourceInError(resource_status=status,
+                                            status_reason=errmsg)
         return False
 
     def rename(self, server, name):
@@ -451,8 +450,8 @@ echo -e '%s\tALL=(ALL)\tNOPASSWD: ALL' >> /etc/sudoers
             return True
         else:
             msg = _("Could not confirm resize of server %s") % server_id
-            raise resource.ResourceUnknownStatus(result=msg,
-                                                 resource_status=status)
+            raise exception.ResourceUnknownStatus(
+                result=msg, resource_status=status)
 
     def check_verify_resize(self, server_id):
         server = self.fetch_server(server_id)
@@ -465,8 +464,8 @@ echo -e '%s\tALL=(ALL)\tNOPASSWD: ALL' >> /etc/sudoers
             return False
         else:
             msg = _("Confirm resize for server %s failed") % server_id
-            raise resource.ResourceUnknownStatus(result=msg,
-                                                 resource_status=status)
+            raise exception.ResourceUnknownStatus(
+                result=msg, resource_status=status)
 
     def rebuild(self, server_id, image_id, password=None,
                 preserve_ephemeral=False):

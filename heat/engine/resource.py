@@ -57,42 +57,6 @@ def _register_class(resource_type, resource_class):
     resources.global_env().register_class(resource_type, resource_class)
 
 
-class UpdateReplace(Exception):
-    '''Raised when resource update requires replacement.'''
-    def __init__(self, resource_name='Unknown'):
-        msg = _("The Resource %s requires replacement.") % resource_name
-        super(Exception, self).__init__(six.text_type(msg))
-
-
-class NoActionRequired(Exception):
-    pass
-
-
-class ResourceInError(exception.HeatException):
-    msg_fmt = _('Went to status %(resource_status)s '
-                'due to "%(status_reason)s"')
-
-    def __init__(self, status_reason=_('Unknown'), **kwargs):
-        super(ResourceInError, self).__init__(status_reason=status_reason,
-                                              **kwargs)
-
-
-class ResourceUnknownStatus(exception.HeatException):
-    msg_fmt = _('%(result)s - Unknown status %(resource_status)s due to '
-                '"%(status_reason)s"')
-
-    def __init__(self, result=_('Resource failed'),
-                 status_reason=_('Unknown'), **kwargs):
-        super(ResourceUnknownStatus, self).__init__(
-            result=result, status_reason=status_reason, **kwargs)
-
-
-class UpdateInProgress(Exception):
-    def __init__(self, resource_name='Unknown'):
-        msg = _("The resource %s is already being updated.") % resource_name
-        super(Exception, self).__init__(six.text_type(msg))
-
-
 @six.python_2_unicode_compatible
 class Resource(object):
     ACTIONS = (
@@ -291,8 +255,9 @@ class Resource(object):
 
         @contextlib.contextmanager
         def special_stack(tmpl, swap_template):
-            # TODO(sirushtim): Load stack from cache
-            stk = stack_mod.Stack.load(context, db_res.stack_id)
+            stk = stack_mod.Stack.load(context, db_res.stack_id,
+                                       cache_data=data)
+
             # NOTE(sirushtim): Because on delete/cleanup operations, we simply
             # update with another template, the stack object won't have the
             # template of the previous stack-run.
@@ -521,7 +486,7 @@ class Resource(object):
             raise exception.NotSupported(feature=mesg)
 
         if not changed_properties_set.issubset(update_allowed_set):
-            raise UpdateReplace(self.name)
+            raise exception.UpdateReplace(self.name)
 
         return dict((k, after_props.get(k)) for k in changed_properties_set)
 
@@ -792,7 +757,7 @@ class Resource(object):
                 else:
                     action = self.CREATE
             except exception.ResourceFailure as failure:
-                if not isinstance(failure.exc, ResourceInError):
+                if not isinstance(failure.exc, exception.ResourceInError):
                     raise failure
 
                 count[action] += 1
@@ -865,17 +830,20 @@ class Resource(object):
                 resource_data.get('metadata'))
 
     def _needs_update(self, after, before, after_props, before_props,
-                      prev_resource):
-        if self.status == self.FAILED or \
+                      prev_resource, check_init_complete=True):
+        if self.status == self.FAILED:
+            raise exception.UpdateReplace(self)
+
+        if check_init_complete and \
                 (self.action == self.INIT and self.status == self.COMPLETE):
-            raise UpdateReplace(self)
+            raise exception.UpdateReplace(self)
 
         if prev_resource is not None:
             cur_class_def, cur_ver = self.implementation_signature()
             prev_class_def, prev_ver = prev_resource.implementation_signature()
 
             if prev_class_def != cur_class_def:
-                raise UpdateReplace(self.name)
+                raise exception.UpdateReplace(self.name)
             if prev_ver != cur_ver:
                 return True
 
@@ -944,7 +912,7 @@ class Resource(object):
         LOG.info(_LI('updating %s'), six.text_type(self))
 
         self.updated_time = datetime.utcnow()
-        with self._action_recorder(action, UpdateReplace):
+        with self._action_recorder(action, exception.UpdateReplace):
             after_props.validate()
             tmpl_diff = self.update_template_diff(function.resolve(after),
                                                   before)
@@ -1333,7 +1301,7 @@ class Resource(object):
             raise
 
         if not updated_ok:
-            ex = UpdateInProgress(self.name)
+            ex = exception.UpdateInProgress(self.name)
             LOG.exception('atomic:%s engine_id:%s/%s' % (
                 rs.atomic_key, rs.engine_id, engine_id))
             raise ex
@@ -1474,8 +1442,11 @@ class Resource(object):
         '''
         if self.stack.has_cache_data(self.name):
             # Load from cache for lightweight resources.
+            complex_key = key
+            if path:
+                complex_key = tuple([key] + list(path))
             attribute = self.stack.cache_data_resource_attribute(
-                self.name, key)
+                self.name, complex_key)
         else:
             try:
                 attribute = self.attributes[key]
@@ -1484,6 +1455,19 @@ class Resource(object):
                                                          key=key)
 
         return attributes.select_from_attribute(attribute, path)
+
+    def FnGetAtts(self):
+        """For the intrinsic function get_attr which returns all attributes.
+
+        :returns: dict of all resource's attributes exclude "show" attribute.
+        """
+        if self.stack.has_cache_data(self.name):
+            attrs = self.stack.cache_data_resource_all_attributes(self.name)
+        else:
+            attrs = dict((k, v) for k, v in six.iteritems(self.attributes))
+        attrs = dict((k, v) for k, v in six.iteritems(attrs)
+                     if k != self.SHOW)
+        return attrs
 
     def FnBase64(self, data):
         '''
@@ -1546,7 +1530,7 @@ class Resource(object):
             else:
                 reason_string = get_string_details()
             self._add_event('SIGNAL', self.status, reason_string)
-        except NoActionRequired:
+        except exception.NoActionRequired:
             # Don't log an event as it just spams the user.
             pass
         except Exception as ex:
@@ -1557,7 +1541,7 @@ class Resource(object):
 
     def handle_update(self, json_snippet=None, tmpl_diff=None, prop_diff=None):
         if prop_diff:
-            raise UpdateReplace(self.name)
+            raise exception.UpdateReplace(self.name)
 
     def metadata_update(self, new_metadata=None):
         '''

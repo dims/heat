@@ -548,6 +548,16 @@ class SoftwareDeployment(signal_responder.SignalResponder):
 
 
 class SoftwareDeploymentGroup(resource_group.ResourceGroup):
+    '''
+    This resource associates a group of servers with some configuration which
+    is to be deployed to all servers in the group.
+
+    The properties work in a similar way to OS::Heat::SoftwareDeployment,
+    and in addition to the attributes documented, you may pass any
+    attribute supported by OS::Heat::SoftwareDeployment, including those
+    exposing arbitrary outputs, and return a map of deployment names to
+    the specified attribute.
+    '''
 
     support_status = support.SupportStatus(version='5.0.0')
 
@@ -638,14 +648,18 @@ class SoftwareDeploymentGroup(resource_group.ResourceGroup):
     def FnGetAtt(self, key, *path):
         rg = super(SoftwareDeploymentGroup, self)
         if key == self.STDOUTS:
-            return rg.FnGetAtt(
-                rg.ATTR_ATTRIBUTES, SoftwareDeployment.STDOUT)
-        if key == self.STDERRS:
-            return rg.FnGetAtt(
-                rg.ATTR_ATTRIBUTES, SoftwareDeployment.STDERR)
-        if key == self.STATUS_CODES:
-            return rg.FnGetAtt(
-                rg.ATTR_ATTRIBUTES, SoftwareDeployment.STATUS_CODE)
+            n_attr = SoftwareDeployment.STDOUT
+        elif key == self.STDERRS:
+            n_attr = SoftwareDeployment.STDERR
+        elif key == self.STATUS_CODES:
+            n_attr = SoftwareDeployment.STATUS_CODE
+        else:
+            # Allow any attribute valid for a single SoftwareDeployment
+            # including arbitrary outputs, so we can't validate here
+            n_attr = key
+
+        rg_attr = rg.FnGetAtt(rg.ATTR_ATTRIBUTES, n_attr)
+        return attributes.select_from_attribute(rg_attr, path)
 
 
 class SoftwareDeployments(SoftwareDeploymentGroup):

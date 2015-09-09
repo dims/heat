@@ -25,8 +25,10 @@ from heat.engine import environment
 from heat.engine import resources
 from heat.engine.resources.aws.ec2 import instance
 from heat.engine.resources.openstack.nova import server
+from heat.engine import support
 from heat.tests import common
 from heat.tests import generic_resource
+
 
 cfg.CONF.import_opt('environment_dir', 'heat.common.config')
 
@@ -729,6 +731,70 @@ class ResourceRegistryTest(common.HeatTestCase):
         ex = self.assertRaises(exception.InvalidBreakPointHook,
                                registry.load, {'resources': resources})
         self.assertEqual(msg, six.text_type(ex))
+
+    def test_list_type_validation_invalid_support_status(self):
+        registry = environment.ResourceRegistry(None, {})
+
+        ex = self.assertRaises(exception.Invalid,
+                               registry.get_types,
+                               support_status='junk')
+        msg = ('Invalid support status and should be one of %s' %
+               six.text_type(support.SUPPORT_STATUSES))
+
+        self.assertIn(msg, ex.message)
+
+    def test_list_type_validation_valid_support_status(self):
+        registry = environment.ResourceRegistry(None, {})
+
+        for status in support.SUPPORT_STATUSES:
+            self.assertEqual([],
+                             registry.get_types(support_status=status))
+
+    def test_list_type_find_by_status(self):
+        registry = resources.global_env().registry
+        types = registry.get_types(support_status=support.UNSUPPORTED)
+        self.assertIn('ResourceTypeUnSupportedLiberty', types)
+        self.assertNotIn('GenericResourceType', types)
+
+    def test_list_type_find_by_status_none(self):
+        registry = resources.global_env().registry
+        types = registry.get_types(support_status=None)
+        self.assertIn('ResourceTypeUnSupportedLiberty', types)
+        self.assertIn('GenericResourceType', types)
+
+    def test_list_type_with_name(self):
+        registry = resources.global_env().registry
+        types = registry.get_types(type_name='ResourceType*')
+        self.assertIn('ResourceTypeUnSupportedLiberty', types)
+        self.assertNotIn('GenericResourceType', types)
+
+    def test_list_type_with_name_none(self):
+        registry = resources.global_env().registry
+        types = registry.get_types(type_name=None)
+        self.assertIn('ResourceTypeUnSupportedLiberty', types)
+        self.assertIn('GenericResourceType', types)
+
+    def test_list_type_with_invalid_type_name(self):
+        registry = resources.global_env().registry
+        types = registry.get_types(type_name="r'[^\+]'")
+        self.assertEqual([], types)
+
+    def test_list_type_with_version(self):
+        registry = resources.global_env().registry
+        types = registry.get_types(version='5.0.0')
+        self.assertIn('ResourceTypeUnSupportedLiberty', types)
+        self.assertNotIn('ResourceTypeSupportedKilo', types)
+
+    def test_list_type_with_version_none(self):
+        registry = resources.global_env().registry
+        types = registry.get_types(version=None)
+        self.assertIn('ResourceTypeUnSupportedLiberty', types)
+        self.assertIn('ResourceTypeSupportedKilo', types)
+
+    def test_list_type_with_version_invalid(self):
+        registry = resources.global_env().registry
+        types = registry.get_types(version='invalid')
+        self.assertEqual([], types)
 
 
 class HookMatchTest(common.HeatTestCase):

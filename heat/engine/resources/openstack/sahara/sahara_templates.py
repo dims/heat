@@ -43,6 +43,7 @@ class SaharaNodeGroupTemplate(resource.Resource):
         SECURITY_GROUPS, AUTO_SECURITY_GROUP,
         AVAILABILITY_ZONE, VOLUMES_AVAILABILITY_ZONE,
         NODE_PROCESSES, FLOATING_IP_POOL, NODE_CONFIGS, IMAGE_ID,
+        IS_PROXY_GATEWAY, VOLUME_LOCAL_TO_INSTANCE, USE_AUTOCONFIG
 
     ) = (
         'name', 'plugin_name', 'hadoop_version', 'flavor', 'description',
@@ -50,6 +51,7 @@ class SaharaNodeGroupTemplate(resource.Resource):
         'security_groups', 'auto_security_group',
         'availability_zone', 'volumes_availability_zone',
         'node_processes', 'floating_ip_pool', 'node_configs', 'image_id',
+        'is_proxy_gateway', 'volume_local_to_instance', 'use_autoconfig'
     )
 
     properties_schema = {
@@ -70,6 +72,9 @@ class SaharaNodeGroupTemplate(resource.Resource):
             properties.Schema.STRING,
             _('Plugin name.'),
             required=True,
+            constraints=[
+                constraints.CustomConstraint('sahara.plugin')
+            ]
         ),
         HADOOP_VERSION: properties.Schema(
             properties.Schema.STRING,
@@ -155,6 +160,22 @@ class SaharaNodeGroupTemplate(resource.Resource):
                 constraints.CustomConstraint('sahara.image'),
             ],
         ),
+        IS_PROXY_GATEWAY: properties.Schema(
+            properties.Schema.BOOLEAN,
+            _("Provide access to nodes using other nodes of the cluster "
+              "as proxy gateways."),
+            support_status=support.SupportStatus(version='5.0.0')
+        ),
+        VOLUME_LOCAL_TO_INSTANCE: properties.Schema(
+            properties.Schema.BOOLEAN,
+            _("Create volumes on the same physical port as an instance."),
+            support_status=support.SupportStatus(version='5.0.0')
+        ),
+        USE_AUTOCONFIG: properties.Schema(
+            properties.Schema.BOOLEAN,
+            _("Configure most important configs automatically."),
+            support_status=support.SupportStatus(version='5.0.0')
+        )
     }
 
     default_client_name = 'sahara'
@@ -190,6 +211,10 @@ class SaharaNodeGroupTemplate(resource.Resource):
                 'neutron').find_neutron_resource(
                     self.properties, self.FLOATING_IP_POOL, 'network')
         node_configs = self.properties[self.NODE_CONFIGS]
+        is_proxy_gateway = self.properties[self.IS_PROXY_GATEWAY]
+        volume_local_to_instance = self.properties[
+            self.VOLUME_LOCAL_TO_INSTANCE]
+        use_autoconfig = self.properties[self.USE_AUTOCONFIG]
 
         node_group_template = self.client().node_group_templates.create(
             self._ngt_name(),
@@ -205,7 +230,10 @@ class SaharaNodeGroupTemplate(resource.Resource):
             auto_security_group=auto_security_group,
             availability_zone=availability_zone,
             volumes_availability_zone=vol_availability_zone,
-            image_id=image_id
+            image_id=image_id,
+            is_proxy_gateway=is_proxy_gateway,
+            volume_local_to_instance=volume_local_to_instance,
+            use_autoconfig=use_autoconfig
         )
         LOG.info(_LI("Node Group Template '%s' has been created"),
                  node_group_template.name)
@@ -245,11 +273,11 @@ class SaharaClusterTemplate(resource.Resource):
     PROPERTIES = (
         NAME, PLUGIN_NAME, HADOOP_VERSION, DESCRIPTION,
         ANTI_AFFINITY, MANAGEMENT_NETWORK,
-        CLUSTER_CONFIGS, NODE_GROUPS, IMAGE_ID,
+        CLUSTER_CONFIGS, NODE_GROUPS, IMAGE_ID, USE_AUTOCONFIG
     ) = (
         'name', 'plugin_name', 'hadoop_version', 'description',
         'anti_affinity', 'neutron_management_network',
-        'cluster_configs', 'node_groups', 'default_image_id',
+        'cluster_configs', 'node_groups', 'default_image_id', 'use_autoconfig'
     )
 
     _NODE_GROUP_KEYS = (
@@ -276,6 +304,9 @@ class SaharaClusterTemplate(resource.Resource):
             properties.Schema.STRING,
             _('Plugin name.'),
             required=True,
+            constraints=[
+                constraints.CustomConstraint('sahara.plugin')
+            ]
         ),
         HADOOP_VERSION: properties.Schema(
             properties.Schema.STRING,
@@ -335,6 +366,11 @@ class SaharaClusterTemplate(resource.Resource):
             ),
 
         ),
+        USE_AUTOCONFIG: properties.Schema(
+            properties.Schema.BOOLEAN,
+            _("Configure most important configs automatically."),
+            support_status=support.SupportStatus(version='5.0.0')
+        )
     }
 
     default_client_name = 'sahara'
@@ -355,6 +391,7 @@ class SaharaClusterTemplate(resource.Resource):
         description = self.properties[self.DESCRIPTION]
         image_id = self.properties[self.IMAGE_ID]
         net_id = self.properties[self.MANAGEMENT_NETWORK]
+        use_autoconfig = self.properties[self.USE_AUTOCONFIG]
         if net_id:
             if self.is_using_neutron():
                 net_id = self.client_plugin('neutron').find_neutron_resource(
@@ -373,7 +410,8 @@ class SaharaClusterTemplate(resource.Resource):
             anti_affinity=anti_affinity,
             net_id=net_id,
             cluster_configs=cluster_configs,
-            node_groups=node_groups
+            node_groups=node_groups,
+            use_autoconfig=use_autoconfig
         )
         LOG.info(_LI("Cluster Template '%s' has been created"),
                  cluster_template.name)

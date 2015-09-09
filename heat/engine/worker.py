@@ -156,7 +156,7 @@ class WorkerService(service.Service):
                     check_resource_update(rsrc, tmpl.id, resource_data,
                                           self.engine_id,
                                           stack.time_remaining())
-                except resource.UpdateReplace:
+                except exception.UpdateReplace:
                     new_res_id = rsrc.make_replacement(tmpl.id)
                     LOG.info("Replacing resource with new id %s", new_res_id)
                     rpc_data = sync_point.serialize_input_data(resource_data)
@@ -172,7 +172,7 @@ class WorkerService(service.Service):
                                        self.engine_id, stack.time_remaining())
 
             return True
-        except resource.UpdateInProgress:
+        except exception.UpdateInProgress:
             if self._try_steal_engine_lock(cnxt, rsrc.id):
                 rpc_data = sync_point.serialize_input_data(resource_data)
                 self._rpc_client.check_resource(cnxt,
@@ -315,7 +315,10 @@ def construct_input_data(rsrc):
     resolved_attributes = {}
     for attr in attributes:
         try:
-            resolved_attributes[attr] = rsrc.FnGetAtt(attr)
+            if isinstance(attr, six.string_types):
+                resolved_attributes[attr] = rsrc.FnGetAtt(attr)
+            else:
+                resolved_attributes[attr] = rsrc.FnGetAtt(*attr)
         except exception.InvalidTemplateAttribute as ita:
             LOG.info(six.text_type(ita))
 

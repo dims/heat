@@ -130,6 +130,54 @@ outputs:
             {get_attr: [BResource, attr_B3]}]
 """
 
+tmpl6 = """
+heat_template_version: 2015-04-30
+resources:
+  AResource:
+    type: ResourceWithComplexAttributesType
+  BResource:
+    type: ResourceWithPropsType
+    properties:
+      Foo:  {get_attr: [AResource, list, 1]}
+      Doo:  {get_attr: [AResource, nested_dict, dict, b]}
+outputs:
+  out1:
+    value: [{get_attr: [AResource, flat_dict, key2]},
+            {get_attr: [AResource, nested_dict, string]},
+            {get_attr: [BResource, attr_B3]}]
+"""
+
+tmpl7 = """
+heat_template_version: 2015-10-15
+resources:
+  AResource:
+    type: ResourceWithPropsType
+    properties:
+      Foo: 'abc'
+  BResource:
+    type: ResourceWithPropsType
+    properties:
+      Foo:  {get_attr: [AResource, attr_A1]}
+      Doo:  {get_attr: [AResource, attr_A2]}
+    metadata:
+      first:  {get_attr: [AResource, meta_A1]}
+  CResource:
+    type: ResourceWithPropsType
+    properties:
+      Foo:  {get_attr: [AResource, attr_A1]}
+      Doo:  {get_attr: [BResource, attr_B2]}
+    metadata:
+      Doo:  {get_attr: [BResource, attr_B1]}
+      first:  {get_attr: [AResource, meta_A1]}
+      second:  {get_attr: [BResource, meta_B2]}
+outputs:
+  out1:
+    value: [{get_attr: [AResource, attr_A3]},
+            {get_attr: [AResource, attr_A4]},
+            {get_attr: [BResource, attr_B3]},
+            {get_attr: [CResource]}]
+"""
+
 
 class DepAttrsTest(common.HeatTestCase):
 
@@ -159,7 +207,21 @@ class DepAttrsTest(common.HeatTestCase):
                                          'attr_A3', 'attr_A4'},
                            'BResource': {'attr_B1', 'attr_B2', 'meta_B2',
                                          'attr_B3'},
-                           'CResource': set()}))
+                           'CResource': set()})),
+        ('nested_attr',
+            dict(tmpl=tmpl6,
+                 expected={'AResource': set([(u'flat_dict', u'key2'),
+                                             (u'list', 1),
+                                             (u'nested_dict', u'dict', u'b'),
+                                             (u'nested_dict', u'string')]),
+                           'BResource': set(['attr_B3'])})),
+        ('several_res_several_attrs_and_all_attrs',
+            dict(tmpl=tmpl7,
+                 expected={'AResource': {'attr_A1', 'attr_A2', 'meta_A1',
+                                         'attr_A3', 'attr_A4'},
+                           'BResource': {'attr_B1', 'attr_B2', 'meta_B2',
+                                         'attr_B3'},
+                           'CResource': {'foo', 'Foo', 'show'}}))
     ]
 
     def setUp(self):
