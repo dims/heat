@@ -114,6 +114,8 @@ class SaharaNodeGroupTemplateTest(common.HeatTestCase):
         self.ngt_mgr = sahara_mock.node_group_templates
         self.patchobject(sahara.SaharaClientPlugin,
                          '_create').return_value = sahara_mock
+        self.patchobject(sahara.SaharaClientPlugin, 'validate_hadoop_version'
+                         ).return_value = None
         self.fake_ngt = FakeNodeGroupTemplate()
 
         self.t = template_format.parse(node_group_template)
@@ -160,28 +162,6 @@ class SaharaNodeGroupTemplateTest(common.HeatTestCase):
                            }
         self.ngt_mgr.create.assert_called_once_with(*expected_args,
                                                     **expected_kwargs)
-
-    def test_ngt_delete(self):
-        ngt = self._create_ngt(self.t)
-        scheduler.TaskRunner(ngt.delete)()
-        self.ngt_mgr.delete.assert_called_once_with(self.fake_ngt.id)
-        self.assertEqual((ngt.DELETE, ngt.COMPLETE), ngt.state)
-
-    def test_ngt_delete_ignores_not_found(self):
-        ngt = self._create_ngt(self.t)
-        self.ngt_mgr.delete.side_effect = sahara.sahara_base.APIException(
-            error_code=404)
-        scheduler.TaskRunner(ngt.delete)()
-        self.ngt_mgr.delete.assert_called_once_with(self.fake_ngt.id)
-
-    def test_ngt_delete_fails(self):
-        ngt = self._create_ngt(self.t)
-        self.ngt_mgr.delete.side_effect = sahara.sahara_base.APIException()
-        delete_task = scheduler.TaskRunner(ngt.delete)
-        ex = self.assertRaises(exception.ResourceFailure, delete_task)
-        expected = "APIException: resources.node-group: None"
-        self.assertEqual(expected, six.text_type(ex))
-        self.ngt_mgr.delete.assert_called_once_with(self.fake_ngt.id)
 
     def test_validate_floatingippool_on_neutron_fails(self):
         ngt = self._init_ngt(self.t)
@@ -256,6 +236,8 @@ class SaharaClusterTemplateTest(common.HeatTestCase):
         self.ct_mgr = sahara_mock.cluster_templates
         self.patchobject(sahara.SaharaClientPlugin,
                          '_create').return_value = sahara_mock
+        self.patchobject(sahara.SaharaClientPlugin, 'validate_hadoop_version'
+                         ).return_value = None
         self.fake_ct = FakeClusterTemplate()
 
         self.t = template_format.parse(cluster_template)
@@ -282,40 +264,19 @@ class SaharaClusterTemplateTest(common.HeatTestCase):
 
     def test_ct_create(self):
         self._create_ct(self.t)
-        expected_args = ('test-cluster-template', 'vanilla',
-                         '2.3.0')
-        expected_kwargs = {'description': '',
-                           'default_image_id': None,
-                           'net_id': 'some_network_id',
-                           'anti_affinity': None,
-                           'node_groups': None,
-                           'cluster_configs': None,
-                           'use_autoconfig': None
-                           }
-        self.ct_mgr.create.assert_called_once_with(*expected_args,
-                                                   **expected_kwargs)
-
-    def test_ct_delete(self):
-        ct = self._create_ct(self.t)
-        scheduler.TaskRunner(ct.delete)()
-        self.ct_mgr.delete.assert_called_once_with(self.fake_ct.id)
-        self.assertEqual((ct.DELETE, ct.COMPLETE), ct.state)
-
-    def test_ngt_delete_ignores_not_found(self):
-        ct = self._create_ct(self.t)
-        self.ct_mgr.delete.side_effect = sahara.sahara_base.APIException(
-            error_code=404)
-        scheduler.TaskRunner(ct.delete)()
-        self.ct_mgr.delete.assert_called_once_with(self.fake_ct.id)
-
-    def test_ngt_delete_fails(self):
-        ct = self._create_ct(self.t)
-        self.ct_mgr.delete.side_effect = sahara.sahara_base.APIException()
-        delete_task = scheduler.TaskRunner(ct.delete)
-        ex = self.assertRaises(exception.ResourceFailure, delete_task)
-        expected = "APIException: resources.cluster-template: None"
-        self.assertEqual(expected, six.text_type(ex))
-        self.ct_mgr.delete.assert_called_once_with(self.fake_ct.id)
+        args = {
+            'name': 'test-cluster-template',
+            'plugin_name': 'vanilla',
+            'hadoop_version': '2.3.0',
+            'description': '',
+            'default_image_id': None,
+            'net_id': 'some_network_id',
+            'anti_affinity': None,
+            'node_groups': None,
+            'cluster_configs': None,
+            'use_autoconfig': None
+        }
+        self.ct_mgr.create.assert_called_once_with(**args)
 
     def test_ct_validate_no_network_on_neutron_fails(self):
         self.t['resources']['cluster-template']['properties'].pop(
@@ -335,7 +296,7 @@ class SaharaClusterTemplateTest(common.HeatTestCase):
         scheduler.TaskRunner(ct.create)()
         self.assertEqual((ct.CREATE, ct.COMPLETE), ct.state)
         self.assertEqual(self.fake_ct.id, ct.resource_id)
-        name = self.ct_mgr.create.call_args[0][0]
+        name = self.ct_mgr.create.call_args[1]['name']
         self.assertIn('-clustertemplate-', name)
 
     def test_ct_show_resource(self):
@@ -343,3 +304,25 @@ class SaharaClusterTemplateTest(common.HeatTestCase):
         self.ct_mgr.get.return_value = self.fake_ct
         self.assertEqual({"cluster-template": "info"}, ct.FnGetAtt('show'))
         self.ct_mgr.get.assert_called_once_with('some_ct_id')
+
+    def test_update(self):
+        ct = self._create_ct(self.t)
+        rsrc_defn = self.stack.t.resource_definitions(self.stack)[
+            'cluster-template']
+        rsrc_defn['Properties']['plugin_name'] = 'hdp'
+        rsrc_defn['Properties']['hadoop_version'] = '1.3.2'
+        scheduler.TaskRunner(ct.update, rsrc_defn)()
+        args = {
+            'name': 'test-cluster-template',
+            'plugin_name': 'hdp',
+            'hadoop_version': '1.3.2',
+            'description': '',
+            'default_image_id': None,
+            'net_id': 'some_network_id',
+            'anti_affinity': None,
+            'node_groups': None,
+            'cluster_configs': None,
+            'use_autoconfig': None
+        }
+        self.ct_mgr.update.assert_called_once_with('some_ct_id', **args)
+        self.assertEqual((ct.UPDATE, ct.COMPLETE), ct.state)

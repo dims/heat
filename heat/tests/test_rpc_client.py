@@ -198,7 +198,9 @@ class EngineRpcAPITestCase(common.HeatTestCase):
     def test_validate_template(self):
         self._test_engine_api('validate_template', 'call',
                               template={u'Foo': u'bar'},
-                              params={u'Egg': u'spam'})
+                              params={u'Egg': u'spam'},
+                              files=None,
+                              show_nested=False)
 
     def test_list_resource_types(self):
         self._test_engine_api('list_resource_types',

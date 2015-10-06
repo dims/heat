@@ -14,11 +14,13 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 
-"""A middleware that turns exceptions into parsable string. Inspired by
-Cinder's faultwrapper
+"""A middleware that turns exceptions into parsable string.
+
+Inspired by Cinder's faultwrapper.
 """
 import six
 
+import sys
 import traceback
 
 from oslo_config import cfg
@@ -92,6 +94,7 @@ class FaultWrapper(wsgi.Middleware):
         'OrphanedObjectError': webob.exc.HTTPBadRequest,
         'UnsupportedObjectError': webob.exc.HTTPBadRequest,
         'ResourceTypeUnavailable': webob.exc.HTTPBadRequest,
+        'InvalidBreakPointHook': webob.exc.HTTPBadRequest,
     }
 
     def _map_exception_to_error(self, class_exception):
@@ -130,7 +133,9 @@ class FaultWrapper(wsgi.Middleware):
             message = message.rstrip('\n')
             msg_trace = traceback_marker + msg_trace
         else:
-            msg_trace = traceback.format_exc()
+            msg_trace = 'None\n'
+            if sys.exc_info() != (None, None, None):
+                msg_trace = traceback.format_exc()
             message = full_message
 
         if isinstance(ex, exception.HeatException):

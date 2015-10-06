@@ -139,7 +139,6 @@ class InstanceGroup(stack_resource.StackResource):
         super(InstanceGroup, self).validate()
 
         if self.update_policy is not None:
-            self.update_policy.validate()
             policy_name = self.ROLLING_UPDATE
             if (policy_name in self.update_policy and
                     self.update_policy[policy_name] is not None):
@@ -241,7 +240,7 @@ class InstanceGroup(stack_resource.StackResource):
 
         return conf, props
 
-    def _get_instance_definition(self):
+    def _get_resource_definition(self):
         conf, props = self._get_conf_properties()
         return rsrc_defn.ResourceDefinition(None,
                                             SCALED_RESOURCE_TYPE,
@@ -261,7 +260,7 @@ class InstanceGroup(stack_resource.StackResource):
 
         Also see heat.scaling.template.member_definitions.
         """
-        instance_definition = self._get_instance_definition()
+        instance_definition = self._get_resource_definition()
         old_resources = self._get_instance_templates()
         definitions = template.member_definitions(
             old_resources, instance_definition, num_instances, num_replace,
@@ -377,7 +376,7 @@ class InstanceGroup(stack_resource.StackResource):
             lb_dict = dict((name, self.stack[name]) for name in lb_names)
             lbutils.reload_loadbalancers(self, lb_dict, exclude)
 
-    def FnGetRefId(self):
+    def get_reference_id(self):
         return self.physical_resource_name_or_FnGetRefId()
 
     def _resolve_attribute(self, name):

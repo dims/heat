@@ -79,7 +79,6 @@ class FakeDBInstance(object):
              "rel": "self"}]
         self.resource_id = 12345
         self.status = 'ACTIVE'
-        self.to_dict = lambda: {'attr': 'val'}
 
     def delete(self):
         pass
@@ -177,11 +176,13 @@ class OSDBInstanceTest(common.HeatTestCase):
         self.m.ReplayAll()
         scheduler.TaskRunner(instance.create)()
         self.assertEqual((instance.CREATE, instance.COMPLETE), instance.state)
+        self.assertEqual('instances', instance.entity)
         self.m.VerifyAll()
 
     def test_create_failed(self):
         mock_stack = mock.Mock()
         mock_stack.db_resource_get.return_value = None
+        mock_stack.has_cache_data.return_value = False
         res_def = mock.Mock(spec=rsrc_defn.ResourceDefinition)
         osdb_res = os_database.OSDBInstance("test", res_def, mock_stack)
 
@@ -738,17 +739,4 @@ class OSDBInstanceTest(common.HeatTestCase):
 
         scheduler.TaskRunner(instance.create)()
         self.assertEqual((instance.CREATE, instance.COMPLETE), instance.state)
-        self.m.VerifyAll()
-
-    def test_show_resource(self):
-        fake_dbinstance = FakeDBInstance()
-        t = template_format.parse(db_template)
-        instance = self._setup_test_clouddbinstance('dbinstance_test', t)
-        instance.resource_id = 12345
-        trove.TroveClientPlugin._create().AndReturn(self.fc)
-        self.fc.instances = self.m.CreateMockAnything()
-        self.m.StubOutWithMock(self.fc.instances, 'get')
-        self.fc.instances.get(12345).AndReturn(fake_dbinstance)
-        self.m.ReplayAll()
-        self.assertEqual({'attr': 'val'}, instance.FnGetAtt('show'))
         self.m.VerifyAll()

@@ -44,12 +44,6 @@ class FakeCronTrigger(object):
         self._data = {'trigger': 'info'}
 
 
-class MistralCronTriggerTestResource(cron_trigger.CronTrigger):
-    @classmethod
-    def is_service_available(cls, context):
-        return True
-
-
 class MistralCronTriggerTest(common.HeatTestCase):
 
     def setUp(self):
@@ -64,11 +58,11 @@ class MistralCronTriggerTest(common.HeatTestCase):
         self.rsrc_defn = resource_defns['cron_trigger']
 
         self.client = mock.Mock()
-        self.patchobject(MistralCronTriggerTestResource, 'client',
+        self.patchobject(cron_trigger.CronTrigger, 'client',
                          return_value=self.client)
 
     def _create_resource(self, name, snippet, stack):
-        ct = MistralCronTriggerTestResource(name, snippet, stack)
+        ct = cron_trigger.CronTrigger(name, snippet, stack)
         self.client.cron_triggers.create.return_value = FakeCronTrigger(
             'my_cron_trigger')
         self.client.cron_triggers.get.return_value = FakeCronTrigger(
@@ -100,19 +94,3 @@ class MistralCronTriggerTest(common.HeatTestCase):
                          ct.FnGetAtt('next_execution_time'))
         self.assertEqual(3, ct.FnGetAtt('remaining_executions'))
         self.assertEqual({'trigger': 'info'}, ct.FnGetAtt('show'))
-
-    def test_delete(self):
-        ct = self._create_resource('trigger', self.rsrc_defn, self.stack)
-        scheduler.TaskRunner(ct.delete)()
-        self.assertEqual((ct.DELETE, ct.COMPLETE), ct.state)
-        self.client.cron_triggers.delete.assert_called_once_with(
-            ct.resource_id)
-
-    def test_delete_not_found(self):
-        ct = self._create_resource('trigger', self.rsrc_defn, self.stack)
-        self.client.cron_triggers.delete.side_effect = (
-            self.client.mistral_base.APIException(error_code=404))
-        scheduler.TaskRunner(ct.delete)()
-        self.assertEqual((ct.DELETE, ct.COMPLETE), ct.state)
-        self.client.cron_triggers.delete.assert_called_once_with(
-            ct.resource_id)

@@ -905,6 +905,8 @@ class TemplateTest(common.HeatTestCase):
             DeletionPolicy: Retain
             UpdatePolicy:
               foo: bar
+          resource2:
+            Type: AWS::EC2::Instance
         ''')
         source = template.Template(cfn_tpl)
         empty = template.Template(copy.deepcopy(empty_template))
@@ -1081,7 +1083,10 @@ class TemplateFnErrorTest(common.HeatTestCase):
 
     def test_bad_input(self):
         tmpl = template.Template(empty_template)
-        resolve = lambda s: TemplateTest.resolve(s, tmpl)
+
+        def resolve(s):
+            return TemplateTest.resolve(s, tmpl)
+
         error = self.assertRaises(self.expect,
                                   resolve,
                                   self.snippet)

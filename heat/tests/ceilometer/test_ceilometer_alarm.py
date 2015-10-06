@@ -14,7 +14,6 @@
 import copy
 import json
 
-from ceilometerclient import exc as ceilometerclient_exc
 import mock
 import mox
 import six
@@ -28,6 +27,7 @@ from heat.engine import rsrc_defn
 from heat.engine import scheduler
 from heat.engine import stack as parser
 from heat.engine import template as tmpl
+from heat.engine import watchrule
 from heat.tests import common
 from heat.tests import utils
 
@@ -420,12 +420,13 @@ class CeilometerAlarmTest(common.HeatTestCase):
             resource_defns = stack.t.resource_definitions(stack)
             rsrc = alarm.CeilometerAlarm(
                 'MEMAlarmHigh', resource_defns['MEMAlarmHigh'], stack)
-            error = self.assertRaises(exception.StackValidationFailed,
-                                      rsrc.validate)
-            self.assertEqual(
-                "Property error: Resources.MEMAlarmHigh.Properties.%s: "
-                "int() argument must be a string or a number, not "
-                "'list'" % p, six.text_type(error))
+            # python 3.4.3 returns another error message
+            # so try to handle this by regexp
+            msg = ("Property error: Resources.MEMAlarmHigh.Properties.%s: "
+                   "int\(\) argument must be a string(, a bytes-like "
+                   "object)? or a number, not 'list'" % p)
+            self.assertRaisesRegexp(exception.StackValidationFailed,
+                                    msg, rsrc.validate)
 
     def test_mem_alarm_high_check_not_required_parameters(self):
         snippet = template_format.parse(not_string_alarm_template)
@@ -453,22 +454,47 @@ class CeilometerAlarmTest(common.HeatTestCase):
                 'MEMAlarmHigh', resource_defns['MEMAlarmHigh'], stack)
             self.assertIsNone(rsrc.validate())
 
-    def test_delete_alarm_not_found(self):
+    def test_delete_watchrule_destroy(self):
         t = template_format.parse(alarm_template)
 
         self.stack = self.create_stack(template=json.dumps(t))
-        self.m.StubOutWithMock(self.fa.alarms, 'delete')
-        self.fa.alarms.delete('foo').AndRaise(
-            ceilometerclient_exc.HTTPNotFound())
-
-        self.m.ReplayAll()
-        self.stack.create()
         rsrc = self.stack['MEMAlarmHigh']
 
-        scheduler.TaskRunner(rsrc.delete)()
-        self.assertEqual((rsrc.DELETE, rsrc.COMPLETE), rsrc.state)
+        wr = mock.MagicMock()
+        self.patchobject(watchrule.WatchRule, 'load', return_value=wr)
+        wr.destroy.return_value = None
 
-        self.m.VerifyAll()
+        self.patchobject(ceilometer.CeilometerClientPlugin, 'client',
+                         return_value=self.fa)
+        self.patchobject(self.fa.alarms, 'delete')
+        rsrc.resource_id = '12345'
+
+        self.assertEqual('12345', rsrc.handle_delete())
+        self.assertEqual(1, wr.destroy.call_count)
+        # check that super method has been called and execute deleting
+        self.assertEqual(1, self.fa.alarms.delete.call_count)
+
+    def test_delete_no_watchrule(self):
+        t = template_format.parse(alarm_template)
+
+        self.stack = self.create_stack(template=json.dumps(t))
+        rsrc = self.stack['MEMAlarmHigh']
+
+        wr = mock.MagicMock()
+        self.patchobject(watchrule.WatchRule, 'load',
+                         side_effect=[exception.WatchRuleNotFound(
+                             watch_name='test')])
+        wr.destroy.return_value = None
+
+        self.patchobject(ceilometer.CeilometerClientPlugin, 'client',
+                         return_value=self.fa)
+        self.patchobject(self.fa.alarms, 'delete')
+        rsrc.resource_id = '12345'
+
+        self.assertEqual('12345', rsrc.handle_delete())
+        self.assertEqual(0, wr.destroy.call_count)
+        # check that super method has been called and execute deleting
+        self.assertEqual(1, self.fa.alarms.delete.call_count)
 
     def _prepare_check_resource(self):
         snippet = template_format.parse(not_string_alarm_template)
@@ -715,29 +741,6 @@ class CombinationAlarmTest(common.HeatTestCase):
 
         scheduler.TaskRunner(rsrc.resume)()
         self.assertEqual((rsrc.RESUME, rsrc.COMPLETE), rsrc.state)
-
-        self.m.VerifyAll()
-
-    def test_delete(self):
-        rsrc = self.create_alarm()
-        self.m.StubOutWithMock(self.fc.alarms, 'delete')
-        self.fc.alarms.delete('foo')
-        self.m.ReplayAll()
-        scheduler.TaskRunner(rsrc.create)()
-        scheduler.TaskRunner(rsrc.delete)()
-        self.assertEqual((rsrc.DELETE, rsrc.COMPLETE), rsrc.state)
-
-        self.m.VerifyAll()
-
-    def test_delete_not_found(self):
-        rsrc = self.create_alarm()
-        self.m.StubOutWithMock(self.fc.alarms, 'delete')
-        self.fc.alarms.delete('foo').AndRaise(
-            ceilometerclient_exc.HTTPNotFound())
-        self.m.ReplayAll()
-        scheduler.TaskRunner(rsrc.create)()
-        scheduler.TaskRunner(rsrc.delete)()
-        self.assertEqual((rsrc.DELETE, rsrc.COMPLETE), rsrc.state)
 
         self.m.VerifyAll()
 

@@ -250,9 +250,9 @@ class HeatIntegrationTest(testscenarios.WithScenarios,
 
     def _verify_status(self, stack, stack_identifier, status, fail_regexp):
         if stack.stack_status == status:
-            # Handle UPDATE_COMPLETE case: Make sure we don't
-            # wait for a stale UPDATE_COMPLETE status.
-            if status == 'UPDATE_COMPLETE':
+            # Handle UPDATE_COMPLETE/FAILED case: Make sure we don't
+            # wait for a stale UPDATE_COMPLETE/FAILED status.
+            if status in ('UPDATE_FAILED', 'UPDATE_COMPLETE'):
                 if self.updated_time.get(
                         stack_identifier) != stack.updated_time:
                     self.updated_time[stack_identifier] = stack.updated_time
@@ -263,8 +263,8 @@ class HeatIntegrationTest(testscenarios.WithScenarios,
         wait_for_action = status.split('_')[0]
         if (stack.action == wait_for_action and
                 fail_regexp.search(stack.stack_status)):
-            # Handle UPDATE_FAILED case.
-            if status == 'UPDATE_FAILED':
+            # Handle UPDATE_COMPLETE/UPDATE_FAILED case.
+            if status in ('UPDATE_FAILED', 'UPDATE_COMPLETE'):
                 if self.updated_time.get(
                         stack_identifier) != stack.updated_time:
                     self.updated_time[stack_identifier] = stack.updated_time
@@ -279,7 +279,7 @@ class HeatIntegrationTest(testscenarios.WithScenarios,
                     stack_status_reason=stack.stack_status_reason)
 
     def _wait_for_stack_status(self, stack_identifier, status,
-                               failure_pattern='^.*_FAILED$',
+                               failure_pattern=None,
                                success_on_not_found=False):
         """
         Waits for a Stack to reach a given status.
@@ -288,7 +288,13 @@ class HeatIntegrationTest(testscenarios.WithScenarios,
         CREATE_COMPLETE, not just COMPLETE which is exposed
         via the status property of Stack in heatclient
         """
-        fail_regexp = re.compile(failure_pattern)
+        if failure_pattern:
+            fail_regexp = re.compile(failure_pattern)
+        elif 'FAILED' in status:
+            # If we're looking for e.g CREATE_FAILED, COMPLETE is unexpected.
+            fail_regexp = re.compile('^.*_COMPLETE$')
+        else:
+            fail_regexp = re.compile('^.*_FAILED$')
         build_timeout = self.conf.build_timeout
         build_interval = self.conf.build_interval
 
@@ -323,10 +329,11 @@ class HeatIntegrationTest(testscenarios.WithScenarios,
             stack_identifier, 'DELETE_COMPLETE',
             success_on_not_found=True)
 
-    def update_stack(self, stack_identifier, template, environment=None,
+    def update_stack(self, stack_identifier, template=None, environment=None,
                      files=None, parameters=None, tags=None,
                      expected_status='UPDATE_COMPLETE',
-                     disable_rollback=True):
+                     disable_rollback=True,
+                     existing=False):
         env = environment or {}
         env_files = files or {}
         parameters = parameters or {}
@@ -335,6 +342,8 @@ class HeatIntegrationTest(testscenarios.WithScenarios,
         build_timeout = self.conf.build_timeout
         build_interval = self.conf.build_interval
         start = timeutils.utcnow()
+        self.updated_time[stack_identifier] = self.client.stacks.get(
+            stack_identifier).updated_time
         while timeutils.delta_seconds(start,
                                       timeutils.utcnow()) < build_timeout:
             try:
@@ -346,7 +355,8 @@ class HeatIntegrationTest(testscenarios.WithScenarios,
                     disable_rollback=disable_rollback,
                     parameters=parameters,
                     environment=env,
-                    tags=tags
+                    tags=tags,
+                    existing=existing
                 )
             except heat_exceptions.HTTPConflict as ex:
                 # FIXME(sirushtim): Wait a little for the stack lock to be
@@ -366,6 +376,25 @@ class HeatIntegrationTest(testscenarios.WithScenarios,
             kwargs['failure_pattern'] = '^ROLLBACK_FAILED$'
 
         self._wait_for_stack_status(**kwargs)
+
+    def preview_update_stack(self, stack_identifier, template,
+                             environment=None, files=None, parameters=None,
+                             tags=None, disable_rollback=True):
+        env = environment or {}
+        env_files = files or {}
+        parameters = parameters or {}
+        stack_name = stack_identifier.split('/')[0]
+
+        return self.client.stacks.preview_update(
+            stack_id=stack_identifier,
+            stack_name=stack_name,
+            template=template,
+            files=env_files,
+            disable_rollback=disable_rollback,
+            parameters=parameters,
+            environment=env,
+            tags=tags
+        )
 
     def assert_resource_is_a_stack(self, stack_identifier, res_name,
                                    wait=False):

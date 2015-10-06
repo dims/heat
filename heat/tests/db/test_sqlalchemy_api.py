@@ -144,14 +144,14 @@ class SqlAlchemyTest(common.HeatTestCase):
         query = mock.Mock()
         db_api._filter_and_page_query(self.ctx, query)
 
-        assert mock_paginate_query.called
+        self.assertTrue(mock_paginate_query.called)
 
     @mock.patch.object(db_api, '_events_paginate_query')
     def test_events_filter_and_page_query(self, mock_events_paginate_query):
         query = mock.Mock()
         db_api._events_filter_and_page_query(self.ctx, query)
 
-        assert mock_events_paginate_query.called
+        self.assertTrue(mock_events_paginate_query.called)
 
     @mock.patch.object(db_api.db_filters, 'exact_filter')
     def test_filter_and_page_query_handles_no_filters(self, mock_db_filter):
@@ -174,7 +174,7 @@ class SqlAlchemyTest(common.HeatTestCase):
         filters = {'foo': 'bar'}
         db_api._filter_and_page_query(self.ctx, query, filters=filters)
 
-        assert mock_db_filter.called
+        self.assertTrue(mock_db_filter.called)
 
     @mock.patch.object(db_api.db_filters, 'exact_filter')
     def test_events_filter_and_page_query_applies_filters(self,
@@ -183,7 +183,7 @@ class SqlAlchemyTest(common.HeatTestCase):
         filters = {'foo': 'bar'}
         db_api._events_filter_and_page_query(self.ctx, query, filters=filters)
 
-        assert mock_db_filter.called
+        self.assertTrue(mock_db_filter.called)
 
     @mock.patch.object(db_api, '_paginate_query')
     def test_filter_and_page_query_whitelists_sort_keys(self,
@@ -778,6 +778,7 @@ class SqlAlchemyTest(common.HeatTestCase):
         self._mock_create(self.m)
         self.m.ReplayAll()
         stack.create()
+        stack._persist_state()
         self.m.UnsetStubs()
 
         events = db_api.event_get_all_by_stack(self.ctx, UUID1)
@@ -869,6 +870,7 @@ class SqlAlchemyTest(common.HeatTestCase):
         self._mock_create(self.m)
         self.m.ReplayAll()
         stack.create()
+        stack._persist_state()
         self.m.UnsetStubs()
 
         num_events = db_api.event_count_all_by_stack(self.ctx, UUID1)
@@ -889,6 +891,7 @@ class SqlAlchemyTest(common.HeatTestCase):
         self._mock_create(self.m)
         self.m.ReplayAll()
         [s.create() for s in stacks]
+        [s._persist_state() for s in stacks]
         self.m.UnsetStubs()
 
         events = db_api.event_get_all_by_tenant(self.ctx)
@@ -909,6 +912,7 @@ class SqlAlchemyTest(common.HeatTestCase):
         self._mock_create(self.m)
         self.m.ReplayAll()
         [s.create() for s in stacks]
+        [s._persist_state() for s in stacks]
         self.m.UnsetStubs()
 
         events = db_api.event_get_all(self.ctx)
@@ -1657,6 +1661,58 @@ class DBAPIStackTest(common.HeatTestCase):
                                       exp_trvsl=diff_uuid)
         self.assertFalse(updated)
 
+    def test_stack_set_status_release_lock(self):
+        stack = create_stack(self.ctx, self.template, self.user_creds)
+        values = {
+            'name': 'db_test_stack_name2',
+            'action': 'update',
+            'status': 'failed',
+            'status_reason': "update_failed",
+            'timeout': '90',
+            'current_traversal': 'another-dummy-uuid',
+        }
+        db_api.stack_lock_create(stack.id, UUID1)
+        observed = db_api.persist_state_and_release_lock(self.ctx, stack.id,
+                                                         UUID1, values)
+        self.assertIsNone(observed)
+        stack = db_api.stack_get(self.ctx, stack.id)
+        self.assertEqual('db_test_stack_name2', stack.name)
+        self.assertEqual('update', stack.action)
+        self.assertEqual('failed', stack.status)
+        self.assertEqual('update_failed', stack.status_reason)
+        self.assertEqual(90, stack.timeout)
+        self.assertEqual('another-dummy-uuid', stack.current_traversal)
+
+    def test_stack_set_status_release_lock_failed(self):
+        stack = create_stack(self.ctx, self.template, self.user_creds)
+        values = {
+            'name': 'db_test_stack_name2',
+            'action': 'update',
+            'status': 'failed',
+            'status_reason': "update_failed",
+            'timeout': '90',
+            'current_traversal': 'another-dummy-uuid',
+        }
+        db_api.stack_lock_create(stack.id, UUID2)
+        observed = db_api.persist_state_and_release_lock(self.ctx, stack.id,
+                                                         UUID1, values)
+        self.assertTrue(observed)
+
+    def test_stack_set_status_failed_release_lock(self):
+        stack = create_stack(self.ctx, self.template, self.user_creds)
+        values = {
+            'name': 'db_test_stack_name2',
+            'action': 'update',
+            'status': 'failed',
+            'status_reason': "update_failed",
+            'timeout': '90',
+            'current_traversal': 'another-dummy-uuid',
+        }
+        db_api.stack_lock_create(stack.id, UUID1)
+        observed = db_api.persist_state_and_release_lock(self.ctx, UUID2,
+                                                         UUID1, values)
+        self.assertTrue(observed)
+
     def test_stack_get_returns_a_stack(self):
         stack = create_stack(self.ctx, self.template, self.user_creds)
         ret_stack = db_api.stack_get(self.ctx, stack.id, show_deleted=False)
@@ -1871,10 +1927,14 @@ class DBAPIStackTest(common.HeatTestCase):
 
     def test_stack_count_total_resources(self):
 
-        def add_resources(stack, count):
+        def add_resources(stack, count, root_stack_id):
             for i in range(count):
                 create_resource(
-                    self.ctx, stack, name='%s-%s' % (stack.name, i))
+                    self.ctx,
+                    stack,
+                    name='%s-%s' % (stack.name, i),
+                    root_stack_id=root_stack_id
+                )
 
         root = create_stack(self.ctx, self.template, self.user_creds,
                             name='root stack')
@@ -1904,38 +1964,19 @@ class DBAPIStackTest(common.HeatTestCase):
         s_4 = create_stack(self.ctx, self.template, self.user_creds,
                            name='s_4', owner_id=root.id)
 
-        add_resources(root, 3)
-        add_resources(s_1, 2)
-        add_resources(s_1_1, 4)
-        add_resources(s_1_2, 5)
-        add_resources(s_1_3, 6)
+        add_resources(root, 3, root.id)
+        add_resources(s_1, 2, root.id)
+        add_resources(s_1_1, 4, root.id)
+        add_resources(s_1_2, 5, root.id)
+        add_resources(s_1_3, 6, root.id)
 
-        add_resources(s_2, 1)
-        add_resources(s_2_1_1_1, 1)
-        add_resources(s_3, 4)
+        add_resources(s_2, 1, root.id)
+        add_resources(s_2_1_1_1, 1, root.id)
+        add_resources(s_3, 4, root.id)
 
         self.assertEqual(26, db_api.stack_count_total_resources(
             self.ctx, root.id))
 
-        self.assertEqual(17, db_api.stack_count_total_resources(
-            self.ctx, s_1.id))
-        self.assertEqual(4, db_api.stack_count_total_resources(
-            self.ctx, s_1_1.id))
-        self.assertEqual(5, db_api.stack_count_total_resources(
-            self.ctx, s_1_2.id))
-        self.assertEqual(6, db_api.stack_count_total_resources(
-            self.ctx, s_1_3.id))
-
-        self.assertEqual(2, db_api.stack_count_total_resources(
-            self.ctx, s_2.id))
-        self.assertEqual(1, db_api.stack_count_total_resources(
-            self.ctx, s_2_1.id))
-        self.assertEqual(1, db_api.stack_count_total_resources(
-            self.ctx, s_2_1_1.id))
-        self.assertEqual(1, db_api.stack_count_total_resources(
-            self.ctx, s_2_1_1_1.id))
-        self.assertEqual(4, db_api.stack_count_total_resources(
-            self.ctx, s_3.id))
         self.assertEqual(0, db_api.stack_count_total_resources(
             self.ctx, s_4.id))
         self.assertEqual(0, db_api.stack_count_total_resources(

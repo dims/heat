@@ -564,6 +564,27 @@ class StackServiceTest(common.HeatTestCase):
                                                    )
 
     @mock.patch.object(stack_object.Stack, 'get_all')
+    def test_stack_list_passes_filter_translated(self, mock_stack_get_all):
+        filters = {'stack_name': 'bar'}
+        self.eng.list_stacks(self.ctx, filters=filters)
+        translated = {'name': 'bar'}
+        mock_stack_get_all.assert_called_once_with(mock.ANY,
+                                                   mock.ANY,
+                                                   mock.ANY,
+                                                   mock.ANY,
+                                                   mock.ANY,
+                                                   translated,
+                                                   mock.ANY,
+                                                   mock.ANY,
+                                                   mock.ANY,
+                                                   mock.ANY,
+                                                   mock.ANY,
+                                                   mock.ANY,
+                                                   mock.ANY,
+                                                   mock.ANY,
+                                                   )
+
+    @mock.patch.object(stack_object.Stack, 'get_all')
     def test_stack_list_tenant_safe_defaults_to_true(self, mock_stack_get_all):
         self.eng.list_stacks(self.ctx)
         mock_stack_get_all.assert_called_once_with(mock.ANY,
@@ -1240,21 +1261,24 @@ class StackServiceTest(common.HeatTestCase):
 
         self.m.VerifyAll()
 
-    def test_signal_reception_async(self):
-        self.eng.thread_group_mgr = tools.DummyThreadGroupMgrLogStart()
-        stack_name = 'signal_reception_async'
+    def _stack_create(self, stack_name):
         stack = tools.get_stack(stack_name, self.ctx, policy_template)
-        self.stack = stack
         tools.setup_keystone_mocks(self.m, stack)
         self.m.ReplayAll()
         stack.store()
         stack.create()
-        test_data = {'food': 'yum'}
-
         self.m.StubOutWithMock(service.EngineService, '_get_stack')
-        s = stack_object.Stack.get_by_id(self.ctx, self.stack.id)
+        s = stack_object.Stack.get_by_id(self.ctx, stack.id)
         service.EngineService._get_stack(self.ctx,
-                                         self.stack.identifier()).AndReturn(s)
+                                         stack.identifier()).AndReturn(s)
+        self.m.ReplayAll()
+        return stack
+
+    def test_signal_reception_async(self):
+        self.eng.thread_group_mgr = tools.DummyThreadGroupMgrLogStart()
+        stack_name = 'signal_reception_async'
+        self.stack = self._stack_create(stack_name)
+        test_data = {'food': 'yum'}
 
         self.m.ReplayAll()
 
@@ -1269,21 +1293,11 @@ class StackServiceTest(common.HeatTestCase):
 
     def test_signal_reception_sync(self):
         stack_name = 'signal_reception_sync'
-        stack = tools.get_stack(stack_name, self.ctx, policy_template)
-        self.stack = stack
-        tools.setup_keystone_mocks(self.m, stack)
-        self.m.ReplayAll()
-        stack.store()
-        stack.create()
+        self.stack = self._stack_create(stack_name)
         test_data = {'food': 'yum'}
 
-        self.m.StubOutWithMock(service.EngineService, '_get_stack')
-        s = stack_object.Stack.get_by_id(self.ctx, self.stack.id)
-        service.EngineService._get_stack(self.ctx,
-                                         self.stack.identifier()).AndReturn(s)
-
         self.m.StubOutWithMock(res.Resource, 'signal')
-        res.Resource.signal(mox.IgnoreArg()).AndReturn(None)
+        res.Resource.signal(mox.IgnoreArg(), False).AndReturn(None)
         self.m.ReplayAll()
 
         self.eng.resource_signal(self.ctx,
@@ -1295,19 +1309,8 @@ class StackServiceTest(common.HeatTestCase):
 
     def test_signal_reception_no_resource(self):
         stack_name = 'signal_reception_no_resource'
-        stack = tools.get_stack(stack_name, self.ctx, policy_template)
-        tools.setup_keystone_mocks(self.m, stack)
-        self.stack = stack
-        self.m.ReplayAll()
-        stack.store()
-        stack.create()
+        self.stack = self._stack_create(stack_name)
         test_data = {'food': 'yum'}
-
-        self.m.StubOutWithMock(service.EngineService, '_get_stack')
-        s = stack_object.Stack.get_by_id(self.ctx, self.stack.id)
-        service.EngineService._get_stack(self.ctx,
-                                         self.stack.identifier()).AndReturn(s)
-        self.m.ReplayAll()
 
         ex = self.assertRaises(dispatcher.ExpectedException,
                                self.eng.resource_signal, self.ctx,
@@ -1345,23 +1348,13 @@ class StackServiceTest(common.HeatTestCase):
         self.m.VerifyAll()
 
     def test_signal_returns_metadata(self):
-        stack = tools.get_stack('signal_reception', self.ctx, policy_template)
-        self.stack = stack
-        tools.setup_keystone_mocks(self.m, stack)
-        self.m.ReplayAll()
-        stack.store()
-        stack.create()
+        self.stack = self._stack_create('signal_reception')
+        rsrc = self.stack['WebServerScaleDownPolicy']
         test_metadata = {'food': 'yum'}
-        rsrc = stack['WebServerScaleDownPolicy']
         rsrc.metadata_set(test_metadata)
 
-        self.m.StubOutWithMock(service.EngineService, '_get_stack')
-        s = stack_object.Stack.get_by_id(self.ctx, self.stack.id)
-        service.EngineService._get_stack(self.ctx,
-                                         self.stack.identifier()).AndReturn(s)
-
         self.m.StubOutWithMock(res.Resource, 'signal')
-        res.Resource.signal(mox.IgnoreArg()).AndReturn(None)
+        res.Resource.signal(mox.IgnoreArg(), False).AndReturn(None)
         self.m.ReplayAll()
 
         md = self.eng.resource_signal(self.ctx,
@@ -1369,6 +1362,40 @@ class StackServiceTest(common.HeatTestCase):
                                       'WebServerScaleDownPolicy', None,
                                       sync_call=True)
         self.assertEqual(test_metadata, md)
+
+        self.m.VerifyAll()
+
+    def test_signal_unset_invalid_hook(self):
+        self.stack = self._stack_create('signal_unset_invalid_hook')
+        details = {'unset_hook': 'invalid_hook'}
+
+        ex = self.assertRaises(dispatcher.ExpectedException,
+                               self.eng.resource_signal,
+                               self.ctx,
+                               dict(self.stack.identifier()),
+                               'WebServerScaleDownPolicy',
+                               details)
+        msg = 'Invalid hook type "invalid_hook"'
+        self.assertIn(msg, six.text_type(ex.exc_info[1]))
+        self.assertEqual(exception.InvalidBreakPointHook,
+                         ex.exc_info[0])
+        self.m.VerifyAll()
+
+    def test_signal_unset_not_defined_hook(self):
+        self.stack = self._stack_create('signal_unset_not_defined_hook')
+        details = {'unset_hook': 'pre-update'}
+        ex = self.assertRaises(dispatcher.ExpectedException,
+                               self.eng.resource_signal,
+                               self.ctx,
+                               dict(self.stack.identifier()),
+                               'WebServerScaleDownPolicy',
+                               details)
+        msg = ('The "pre-update" hook is not defined on '
+               'AWSScalingPolicy "WebServerScaleDownPolicy"')
+        self.assertIn(msg, six.text_type(ex.exc_info[1]))
+        self.assertEqual(exception.InvalidBreakPointHook,
+                         ex.exc_info[0])
+
         self.m.VerifyAll()
 
     def test_signal_calls_metadata_update(self):
@@ -1385,7 +1412,7 @@ class StackServiceTest(common.HeatTestCase):
                                          self.stack.identifier()).AndReturn(s)
 
         self.m.StubOutWithMock(res.Resource, 'signal')
-        res.Resource.signal(mox.IgnoreArg()).AndReturn(None)
+        res.Resource.signal(mox.IgnoreArg(), False).AndReturn(None)
         self.m.StubOutWithMock(res.Resource, 'metadata_update')
         # this will be called once for the Random resource
         res.Resource.metadata_update().AndReturn(None)
@@ -1413,7 +1440,7 @@ class StackServiceTest(common.HeatTestCase):
                                          self.stack.identifier()).AndReturn(s)
 
         self.m.StubOutWithMock(res.Resource, 'signal')
-        res.Resource.signal(mox.IgnoreArg()).AndReturn(None)
+        res.Resource.signal(mox.IgnoreArg(), False).AndReturn(None)
         # this will never be called
         self.m.StubOutWithMock(res.Resource, 'metadata_update')
         self.m.ReplayAll()
@@ -1619,7 +1646,7 @@ class StackServiceTest(common.HeatTestCase):
         fake_stack.action = 'CREATE'
         fake_stack.id = 'foo'
         fake_stack.status = 'IN_PROGRESS'
-        fake_stack.state_set.return_value = None
+
         mock_stack_load.return_value = fake_stack
 
         fake_lock = mock.MagicMock()
@@ -1635,11 +1662,60 @@ class StackServiceTest(common.HeatTestCase):
         filters = {'status': parser.Stack.IN_PROGRESS}
         mock_get_all.assert_called_once_with(self.ctx,
                                              filters=filters,
-                                             tenant_safe=False)
+                                             tenant_safe=False,
+                                             show_nested=True)
         mock_stack_load.assert_called_once_with(self.ctx,
                                                 stack=db_stack,
                                                 use_stored_context=True)
         mock_thread.start_with_acquired_lock.assert_called_once_with(
-            fake_stack, fake_lock, fake_stack.state_set, fake_stack.action,
-            fake_stack.FAILED, 'Engine went down during stack CREATE'
+            fake_stack, fake_lock,
+            self.eng.set_stack_and_resource_to_failed, fake_stack
         )
+
+    def test_set_stack_and_resource_to_failed(self):
+
+        def fake_stack():
+            stk = mock.MagicMock()
+            stk.action = 'CREATE'
+            stk.id = 'foo'
+            stk.status = 'IN_PROGRESS'
+            stk.FAILED = 'FAILED'
+
+            def mock_stack_state_set(a, s, reason):
+                stk.status = s
+                stk.action = a
+                stk.status_reason = reason
+
+            stk.state_set = mock_stack_state_set
+
+            return stk
+
+        def fake_stack_resource(name, action, status):
+            rs = mock.MagicMock()
+            rs.name = name
+            rs.action = action
+            rs.status = status
+            rs.IN_PROGRESS = 'IN_PROGRESS'
+            rs.FAILED = 'FAILED'
+
+            def mock_resource_state_set(a, s, reason='engine_down'):
+                rs.status = s
+                rs.action = a
+                rs.status_reason = reason
+
+            rs.state_set = mock_resource_state_set
+
+            return rs
+
+        test_stack = fake_stack()
+
+        test_stack.resources = {
+            'r1': fake_stack_resource('r1', 'UPDATE', 'COMPLETE'),
+            'r2': fake_stack_resource('r2', 'UPDATE', 'IN_PROGRESS'),
+            'r3': fake_stack_resource('r3', 'UPDATE', 'FAILED')}
+
+        self.eng.set_stack_and_resource_to_failed(test_stack)
+        self.assertEqual('FAILED', test_stack.status)
+        self.assertEqual('COMPLETE', test_stack.resources.get('r1').status)
+        self.assertEqual('FAILED', test_stack.resources.get('r2').status)
+        self.assertEqual('FAILED', test_stack.resources.get('r3').status)

@@ -23,10 +23,12 @@ from heat.engine import scheduler
 from heat.engine import service
 from heat.engine import stack
 from heat.engine import template
+from heat.objects import stack as stack_object
 from heat.rpc import api as rpc_api
 from heat.tests import common
 from heat.tests import generic_resource as generic_rsrc
 from heat.tests import utils
+
 
 empty_template = template_format.parse('''{
   "HeatTemplateFormatVersion" : "2012-12-12",
@@ -267,6 +269,7 @@ class StackUpdateTest(common.HeatTestCase):
         self.stack.store()
         stack_id = self.stack.id
         self.stack.create()
+        self.stack._persist_state()
         self.assertEqual((stack.Stack.CREATE, stack.Stack.COMPLETE),
                          self.stack.state)
 
@@ -290,6 +293,7 @@ class StackUpdateTest(common.HeatTestCase):
                                     template.Template(tmpl2))
 
         self.stack.update(updated_stack)
+        self.stack._persist_state()
         self.assertEqual((stack.Stack.UPDATE, stack.Stack.COMPLETE),
                          self.stack.state)
         mock_upd.assert_called_once_with(mock.ANY, mock.ANY, prop_diff1)
@@ -307,6 +311,7 @@ class StackUpdateTest(common.HeatTestCase):
                                     template.Template(tmpl3))
 
         self.stack.update(updated_stack)
+        self.stack._persist_state()
         self.assertEqual((stack.Stack.UPDATE, stack.Stack.COMPLETE),
                          self.stack.state)
 
@@ -854,17 +859,21 @@ class StackUpdateTest(common.HeatTestCase):
         mock_create = self.patchobject(generic_rsrc.ResourceWithProps,
                                        'handle_create', side_effect=Exception)
 
-        with mock.patch.object(self.stack, 'state_set',
-                               side_effect=self.stack.state_set) as mock_state:
+        with mock.patch.object(stack_object.Stack,
+                               'update_by_id') as mock_db_update:
             self.stack.update(updated_stack)
             self.assertEqual((stack.Stack.ROLLBACK, stack.Stack.COMPLETE),
                              self.stack.state)
             self.assertEqual('abc', self.stack['AResource'].properties['Foo'])
-            self.assertEqual(2, mock_state.call_count)
-            self.assertEqual(('UPDATE', 'IN_PROGRESS'),
-                             mock_state.call_args_list[0][0][:2])
-            self.assertEqual(('ROLLBACK', 'IN_PROGRESS'),
-                             mock_state.call_args_list[1][0][:2])
+            self.assertEqual(5, mock_db_update.call_count)
+            self.assertEqual('UPDATE',
+                             mock_db_update.call_args_list[0][0][2]['action'])
+            self.assertEqual('IN_PROGRESS',
+                             mock_db_update.call_args_list[0][0][2]['status'])
+            self.assertEqual('ROLLBACK',
+                             mock_db_update.call_args_list[1][0][2]['action'])
+            self.assertEqual('IN_PROGRESS',
+                             mock_db_update.call_args_list[1][0][2]['status'])
 
         mock_create.assert_called_once_with()
 
@@ -1695,13 +1704,15 @@ class StackUpdateTest(common.HeatTestCase):
 
         tmpl_update = {
             'heat_template_version': '2013-05-23',
+            'parameters': {'aparam': {'type': 'number', 'default': 1}},
             'resources': {
                 'Ares': {'type': 'GenericResourceType'},
                 'Bres': {'type': 'GenericResourceType'},
                 'Cres': {
-                    'type': 'ResourceWithPropsType',
+                    'type': 'ResourceWithPropsRefPropOnDelete',
                     'properties': {
                         'Foo': {'get_resource': 'Bres'},
+                        'FooInt': {'get_param': 'aparam'},
                     }
                 }
             }
@@ -1792,6 +1803,8 @@ class StackUpdateTest(common.HeatTestCase):
                          self.stack.state)
         # assert that backup stack has been updated correctly
         self.assertIn('Bres', self.stack._backup_stack())
+        # set data for Bres in main stack
+        self.stack['Bres'].data_set('test', '42')
 
         # update the stack with resource that updated in-place
         tmpl_update['resources']['Bres']['properties']['an_int'] = 1
@@ -1804,3 +1817,8 @@ class StackUpdateTest(common.HeatTestCase):
         # assert that resource in backup stack also has been updated
         backup = self.stack._backup_stack()
         self.assertEqual(1, backup['Bres'].properties['an_int'])
+
+        # check, that updated Bres in new stack has copied data.
+        # Bres in backup stack should have empty data.
+        self.assertEqual({}, backup['Bres'].data())
+        self.assertEqual({'test': '42'}, self.stack['Bres'].data())

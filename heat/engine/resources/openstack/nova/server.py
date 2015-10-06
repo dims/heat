@@ -22,7 +22,6 @@ import six
 
 from heat.common import exception
 from heat.common.i18n import _
-from heat.common.i18n import _LI
 from heat.engine import attributes
 from heat.engine.clients import progress
 from heat.engine import constraints
@@ -368,10 +367,10 @@ class Server(stack_user.StackUser, sh.SchedulerHintsMixin,
                     NETWORK_SUBNET: properties.Schema(
                         properties.Schema.STRING,
                         _('Subnet in which to allocate the IP address for '
-                          'port. Used only if port property is not specified '
-                          'for creating port, based on derived properties.'),
-                        support_status=support.SupportStatus(version='5.0.0'),
-                        implemented=False
+                          'port. Used for creating port, based on derived '
+                          'properties. If subnet is specified, network '
+                          'property becomes optional.'),
+                        support_status=support.SupportStatus(version='5.0.0')
                     )
                 },
             ),
@@ -412,7 +411,9 @@ class Server(stack_user.StackUser, sh.SchedulerHintsMixin,
               'the provided keypair. POLL_SERVER_HEAT will allow calls to '
               'the Heat API resource-show using the provided keystone '
               'credentials. POLL_TEMP_URL will create and populate a '
-              'Swift TempURL with metadata for polling.'),
+              'Swift TempURL with metadata for polling. ZAQAR_MESSAGE will '
+              'create a dedicated zaqar queue and post the metadata '
+              'for polling.'),
             default=cfg.CONF.default_software_config_transport,
             constraints=[
                 constraints.AllowedValues(_SOFTWARE_CONFIG_TRANSPORTS),
@@ -756,7 +757,10 @@ class Server(stack_user.StackUser, sh.SchedulerHintsMixin,
         return server.id
 
     def check_create_complete(self, server_id):
-        return self.client_plugin()._check_active(server_id)
+        check = self.client_plugin()._check_active(server_id)
+        if check:
+            self.store_external_ports()
+        return check
 
     def handle_check(self):
         server = self.client().servers.get(self.resource_id)
@@ -837,8 +841,13 @@ class Server(stack_user.StackUser, sh.SchedulerHintsMixin,
                         cls.BLOCK_DEVICE_MAPPING_SWAP_SIZE),
                 }
 
-            update_props = (cls.BLOCK_DEVICE_MAPPING_DEVICE_NAME,
-                            cls.BLOCK_DEVICE_MAPPING_DEVICE_TYPE,
+            # NOTE(prazumovsky): In case of server doesn't take empty value of
+            # device name, need to escape from such situation.
+            device_name = mapping.get(cls.BLOCK_DEVICE_MAPPING_DEVICE_NAME)
+            if device_name:
+                bmd_dict[cls.BLOCK_DEVICE_MAPPING_DEVICE_NAME] = device_name
+
+            update_props = (cls.BLOCK_DEVICE_MAPPING_DEVICE_TYPE,
                             cls.BLOCK_DEVICE_MAPPING_DISK_BUS,
                             cls.BLOCK_DEVICE_MAPPING_BOOT_INDEX,
                             cls.BLOCK_DEVICE_MAPPING_VOLUME_SIZE,
@@ -935,14 +944,7 @@ class Server(stack_user.StackUser, sh.SchedulerHintsMixin,
                         break
 
     def _update_flavor(self, prop_diff):
-        flavor_update_policy = (
-            prop_diff.get(self.FLAVOR_UPDATE_POLICY) or
-            self.properties[self.FLAVOR_UPDATE_POLICY])
         flavor = prop_diff[self.FLAVOR]
-
-        if flavor_update_policy == 'REPLACE':
-            raise exception.UpdateReplace(self.name)
-
         flavor_id = self.client_plugin().get_flavor_id(flavor)
         handler_args = {'args': (flavor_id,)}
         checker_args = {'args': (flavor_id, flavor)}
@@ -959,8 +961,6 @@ class Server(stack_user.StackUser, sh.SchedulerHintsMixin,
         image_update_policy = (
             prop_diff.get(self.IMAGE_UPDATE_POLICY) or
             self.properties[self.IMAGE_UPDATE_POLICY])
-        if image_update_policy == 'REPLACE':
-            raise exception.UpdateReplace(self.name)
         image = prop_diff[self.IMAGE]
         image_id = self.client_plugin('glance').get_image_id(image)
         preserve_ephemeral = (
@@ -1004,8 +1004,45 @@ class Server(stack_user.StackUser, sh.SchedulerHintsMixin,
 
         return updaters
 
+    def _needs_update(self, after, before, after_props, before_props,
+                      prev_resource, check_init_complete=True):
+        result = super(Server, self)._needs_update(
+            after, before, after_props, before_props, prev_resource,
+            check_init_complete=check_init_complete)
+
+        prop_diff = self.update_template_diff_properties(after_props,
+                                                         before_props)
+
+        if self.FLAVOR in prop_diff:
+            flavor_update_policy = (
+                prop_diff.get(self.FLAVOR_UPDATE_POLICY) or
+                self.properties[self.FLAVOR_UPDATE_POLICY])
+            if flavor_update_policy == 'REPLACE':
+                raise exception.UpdateReplace(self.name)
+
+        if self.IMAGE in prop_diff:
+            image_update_policy = (
+                prop_diff.get(self.IMAGE_UPDATE_POLICY) or
+                self.properties[self.IMAGE_UPDATE_POLICY])
+            if image_update_policy == 'REPLACE':
+                raise exception.UpdateReplace(self.name)
+
+        return result
+
     def handle_update(self, json_snippet, tmpl_diff, prop_diff):
         if 'Metadata' in tmpl_diff:
+            # If SOFTWARE_CONFIG user_data_format is enabled we require
+            # the "deployments" and "os-collect-config" keys for Deployment
+            # polling.  We can attempt to merge the occ data, but any
+            # metadata update containing deployments will be discarded.
+            if self.user_data_software_config():
+                metadata = self.metadata_get(True) or {}
+                new_occ_md = tmpl_diff['Metadata'].get('os-collect-config', {})
+                occ_md = metadata.get('os-collect-config', {})
+                occ_md.update(new_occ_md)
+                tmpl_diff['Metadata']['os-collect-config'] = occ_md
+                deployment_md = metadata.get('deployments', [])
+                tmpl_diff['Metadata']['deployments'] = deployment_md
             self.metadata_set(tmpl_diff['Metadata'])
 
         updaters = []
@@ -1052,7 +1089,10 @@ class Server(stack_user.StackUser, sh.SchedulerHintsMixin,
                 prg.complete = check_complete(*prg.checker_args,
                                               **prg.checker_kwargs)
                 break
-        return all(prg.complete for prg in updaters)
+        status = all(prg.complete for prg in updaters)
+        if status:
+            self.store_external_ports()
+        return status
 
     def metadata_update(self, new_metadata=None):
         '''
@@ -1130,44 +1170,15 @@ class Server(stack_user.StackUser, sh.SchedulerHintsMixin,
 
         return bootable_vol
 
-    def _validate_network(self, network):
-        if (network.get(self.NETWORK_ID) is None
-            and network.get(self.NETWORK_PORT) is None
-                and network.get(self.NETWORK_UUID) is None):
-            msg = _('One of the properties "%(id)s", "%(port_id)s", '
-                    '"%(uuid)s" should be set for the '
-                    'specified network of server "%(server)s".'
-                    '') % dict(id=self.NETWORK_ID,
-                               port_id=self.NETWORK_PORT,
-                               uuid=self.NETWORK_UUID,
-                               server=self.name)
-            raise exception.StackValidationFailed(message=msg)
-
-        if network.get(self.NETWORK_UUID) and network.get(self.NETWORK_ID):
-            msg = _('Properties "%(uuid)s" and "%(id)s" are both set '
-                    'to the network "%(network)s" for the server '
-                    '"%(server)s". The "%(uuid)s" property is deprecated. '
-                    'Use only "%(id)s" property.'
-                    '') % dict(uuid=self.NETWORK_UUID,
-                               id=self.NETWORK_ID,
-                               network=network[self.NETWORK_ID],
-                               server=self.name)
-            raise exception.StackValidationFailed(message=msg)
-        elif network.get(self.NETWORK_UUID):
-            LOG.info(_LI('For the server "%(server)s" the "%(uuid)s" '
-                         'property is set to network "%(network)s". '
-                         '"%(uuid)s" property is deprecated. Use '
-                         '"%(id)s"  property instead.'),
-                     dict(uuid=self.NETWORK_UUID,
-                          id=self.NETWORK_ID,
-                          network=network[self.NETWORK_ID],
-                          server=self.name))
-
     def validate(self):
-        '''
-        Validate any of the provided params
-        '''
+        """Validate any of the provided params."""
         super(Server, self).validate()
+
+        if self.user_data_software_config():
+            if 'deployments' in self.t.metadata():
+                msg = _('deployments key not allowed in resource metadata '
+                        'with user_data_format of SOFTWARE_CONFIG')
+                raise exception.StackValidationFailed(message=msg)
 
         bootable_vol = self._validate_block_device_mapping()
 
@@ -1264,7 +1275,6 @@ class Server(stack_user.StackUser, sh.SchedulerHintsMixin,
         return self.handle_delete()
 
     def handle_delete(self):
-
         if self.resource_id is None:
             return
 
@@ -1272,6 +1282,10 @@ class Server(stack_user.StackUser, sh.SchedulerHintsMixin,
             self._delete_user()
             self._delete_temp_url()
             self._delete_queue()
+
+        # remove internal and external ports
+        self._delete_internal_ports()
+        self.data_delete('external_ports')
 
         try:
             self.client().servers.delete(self.resource_id)
@@ -1395,6 +1409,12 @@ class Server(stack_user.StackUser, sh.SchedulerHintsMixin,
         props = function.resolve(self.properties.data)
         props[self.IMAGE] = image_id
         return defn.freeze(properties=props)
+
+    def prepare_for_replace(self):
+        self.prepare_ports_for_replace()
+
+    def restore_after_rollback(self):
+        self.restore_ports_after_rollback()
 
 
 def resource_mapping():

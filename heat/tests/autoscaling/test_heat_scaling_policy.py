@@ -115,8 +115,28 @@ class TestAutoScalingPolicy(common.HeatTestCase):
                                return_value=False) as mock_cip:
             pol.handle_signal(details=test)
             mock_cip.assert_called_once_with()
-        group.adjust.assert_called_once_with(1, 'ChangeInCapacity', None,
+        group.adjust.assert_called_once_with(1, 'change_in_capacity', None,
                                              signal=True)
+
+    def test_scaling_policy_refid(self):
+        t = template_format.parse(as_template)
+        stack = utils.parse_stack(t)
+        rsrc = stack['my-policy']
+        rsrc.resource_id = 'xyz'
+        self.assertEqual('xyz', rsrc.FnGetRefId())
+
+    def test_scaling_policy_refid_convg_cache_data(self):
+        t = template_format.parse(as_template)
+        cache_data = {'my-policy': {
+            'uuid': mock.ANY,
+            'id': mock.ANY,
+            'action': 'CREATE',
+            'status': 'COMPLETE',
+            'reference_id': 'convg_xyz'
+        }}
+        stack = utils.parse_stack(t, cache_data=cache_data)
+        rsrc = stack['my-policy']
+        self.assertEqual('convg_xyz', rsrc.FnGetRefId())
 
 
 class TestCooldownMixin(common.HeatTestCase):
@@ -137,7 +157,7 @@ class TestCooldownMixin(common.HeatTestCase):
 
         now = timeutils.utcnow()
         previous_meta = {'cooldown': {
-            now.isoformat(): 'ChangeInCapacity : 1'}}
+            now.isoformat(): 'change_in_capacity : 1'}}
         self.patchobject(pol, 'metadata_get', return_value=previous_meta)
         self.assertTrue(pol._cooldown_inprogress())
 
@@ -158,7 +178,7 @@ class TestCooldownMixin(common.HeatTestCase):
         awhile_ago = timeutils.utcnow() - datetime.timedelta(seconds=100)
         previous_meta = {
             'cooldown': {
-                awhile_ago.isoformat(): 'ChangeInCapacity : 1'
+                awhile_ago.isoformat(): 'change_in_capacity : 1'
             },
             'scaling_in_progress': False
         }
@@ -177,7 +197,7 @@ class TestCooldownMixin(common.HeatTestCase):
 
         now = timeutils.utcnow()
         previous_meta = {'cooldown': {
-            now.isoformat(): 'ChangeInCapacity : 1'}}
+            now.isoformat(): 'change_in_capacity : 1'}}
         self.patchobject(pol, 'metadata_get', return_value=previous_meta)
         self.assertFalse(pol._cooldown_inprogress())
 
@@ -194,7 +214,7 @@ class TestCooldownMixin(common.HeatTestCase):
 
         now = timeutils.utcnow()
         previous_meta = {'cooldown': {
-            now.isoformat(): 'ChangeInCapacity : 1'}}
+            now.isoformat(): 'change_in_capacity : 1'}}
         self.patchobject(pol, 'metadata_get', return_value=previous_meta)
         self.assertFalse(pol._cooldown_inprogress())
 

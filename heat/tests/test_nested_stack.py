@@ -84,9 +84,8 @@ Outputs:
         stack.store()
         return stack
 
-    @mock.patch.object(parser.Stack, 'root_stack_id')
     @mock.patch.object(parser.Stack, 'total_resources')
-    def test_nested_stack_three_deep(self, tr, rsi):
+    def test_nested_stack_three_deep(self, tr):
         root_template = '''
 HeatTemplateFormatVersion: 2012-12-12
 Resources:
@@ -118,7 +117,6 @@ Resources:
             depth2_template,
             self.nested_template]
 
-        rsi.return_value = '1234'
         tr.return_value = 2
 
         self.validate_stack(root_template)
@@ -126,11 +124,9 @@ Resources:
                  mock.call('https://server.test/depth2.template'),
                  mock.call('https://server.test/depth3.template')]
         urlfetch.get.assert_has_calls(calls)
-        tr.assert_called_with('1234')
 
-    @mock.patch.object(parser.Stack, 'root_stack_id')
     @mock.patch.object(parser.Stack, 'total_resources')
-    def test_nested_stack_six_deep(self, tr, rsi):
+    def test_nested_stack_six_deep(self, tr):
         tmpl = '''
 HeatTemplateFormatVersion: 2012-12-12
 Resources:
@@ -158,11 +154,12 @@ Resources:
             depth5_template,
             self.nested_template]
 
-        rsi.return_value = '1234'
         tr.return_value = 5
 
         t = template_format.parse(root_template)
         stack = self.parse_stack(t)
+        stack['Nested'].root_stack_id = '1234'
+
         res = self.assertRaises(exception.StackValidationFailed,
                                 stack.validate)
         self.assertIn('Recursion depth exceeds', six.text_type(res))
@@ -213,9 +210,8 @@ Resources:
                  mock.call('https://server.test/depth4.template')]
         urlfetch.get.assert_has_calls(calls, any_order=True)
 
-    @mock.patch.object(parser.Stack, 'root_stack_id')
     @mock.patch.object(parser.Stack, 'total_resources')
-    def test_nested_stack_infinite_recursion(self, tr, rsi):
+    def test_nested_stack_infinite_recursion(self, tr):
         tmpl = '''
 HeatTemplateFormatVersion: 2012-12-12
 Resources:
@@ -227,7 +223,7 @@ Resources:
         urlfetch.get.return_value = tmpl
         t = template_format.parse(tmpl)
         stack = self.parse_stack(t)
-        rsi.return_value = '1234'
+        stack['Nested'].root_stack_id = '1234'
         tr.return_value = 2
         res = self.assertRaises(exception.StackValidationFailed,
                                 stack.validate)
@@ -268,6 +264,27 @@ Resources:
         stack = self.parse_stack(t)
         nested_stack = stack['the_nested']
         self.assertRaises(ValueError, nested_stack.child_template)
+
+    def test_refid(self):
+        t = template_format.parse(self.test_template)
+        stack = self.parse_stack(t)
+        nested_stack = stack['the_nested']
+        self.assertEqual('the_nested', nested_stack.FnGetRefId())
+
+    def test_refid_convergence_cache_data(self):
+        t = template_format.parse(self.test_template)
+        tmpl = template.Template(t)
+        ctx = utils.dummy_context()
+        cache_data = {'the_nested': {
+            'uuid': mock.ANY,
+            'id': mock.ANY,
+            'action': 'CREATE',
+            'status': 'COMPLETE',
+            'reference_id': 'the_nested_convg_mock'
+        }}
+        stack = parser.Stack(ctx, 'test_stack', tmpl, cache_data=cache_data)
+        nested_stack = stack['the_nested']
+        self.assertEqual('the_nested_convg_mock', nested_stack.FnGetRefId())
 
 
 class ResDataResource(generic_rsrc.GenericResource):

@@ -163,19 +163,21 @@ For example, Heat currently supports the following values for the
     ``get_attr``/``get_param`` references should be used instead. Moreover
     ``get_attr`` since this version returns dict of all attributes for the
     given resource excluding *show* attribute, if there's no <attribute name>
-    specified, e.g. :code:`{ get_attr: [<resource name>]}`. The complete list
-    of supported functions is::
+    specified, e.g. :code:`{ get_attr: [<resource name>]}`. This version
+    also adds the str_split function and support for passing multiple lists to
+    the existing list_join function. The complete list of supported functions
+    is::
 
-  get_attr
-  get_file
-  get_param
-  get_resource
-  list_join
-  repeat
-  digest
-  resource_facade
-  str_replace
-  str_split
+      get_attr
+      get_file
+      get_param
+      get_resource
+      list_join
+      repeat
+      digest
+      resource_facade
+      str_replace
+      str_split
 
 .. _hot_spec_parameter_groups:
 
@@ -507,6 +509,16 @@ For example
        description: SSH key pair
        constraints:
          - custom_constraint: nova.keypair
+
+The following section lists the custom constraints and the plug-ins
+that support them.
+
+.. table_from_text:: ../../setup.cfg
+   :header: Name,Plug-in
+   :regex: (.*)=(.*)
+   :start-after: heat.constraints =
+   :end-before: heat.stack_lifecycle_plugins =
+   :sort:
 
 .. _hot_spec_pseudo_parameters:
 
@@ -920,6 +932,19 @@ For example
 
 This resolve to the string ``one, two, and three``.
 
+From HOT version ``2015-10-15`` you may optionally pass additional lists, which
+will be appended to the previous lists to join.
+
+For example::
+
+   list_join: [', ', ['one', 'two'], ['three', 'four']]]
+
+This resolve to the string ``one, two, three, four``.
+
+From HOT version ``2015-10-15`` you may optionally also pass non-string list
+items (e.g json/map/list parameters or attributes) and they will be serialized
+as json before joining.
+
 
 digest
 ------
@@ -1084,7 +1109,11 @@ template
 
 params
     Provides parameter mappings in the form of dictionary. Each key refers to a
-    placeholder used in the ``template`` attribute.
+    placeholder used in the ``template`` attribute. From HOT version
+    ``2015-10-15`` you may optionally pass non-string parameter values
+    (e.g json/map/list parameters or attributes) and they will be serialized
+    as json before replacing, prior heat/HOT versions require string values.
+
 
 The following example shows a simple use of the ``str_replace`` function in the
 outputs section of a template to build a URL for logging into a deployed

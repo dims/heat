@@ -128,17 +128,6 @@ class NovaKeyPairTest(common.HeatTestCase):
                       "range (min: 1, max: 255)", six.text_type(error))
         self.m.VerifyAll()
 
-    def test_delete_key(self):
-        """Test basic delete."""
-        test_res = self._get_test_resource(self.kp_template)
-        test_res.resource_id = "key_name"
-        test_res.state_set(test_res.CREATE, test_res.COMPLETE)
-        self.fake_keypairs.delete("key_name").AndReturn(None)
-        self.m.ReplayAll()
-        scheduler.TaskRunner(test_res.delete)()
-        self.assertEqual((test_res.DELETE, test_res.COMPLETE), test_res.state)
-        self.m.VerifyAll()
-
     def test_check_key(self):
         res = self._get_test_resource(self.kp_template)
         res.client = mock.Mock()
@@ -196,3 +185,21 @@ class NovaKeyPairTest(common.HeatTestCase):
         self.assertEqual((tp_test.CREATE, tp_test.COMPLETE), tp_test.state)
         self.assertEqual(tp_test.resource_id, created_key.name)
         self.m.VerifyAll()
+
+    def test_nova_keypair_refid(self):
+        stack = utils.parse_stack(self.kp_template)
+        rsrc = stack['kp']
+        rsrc.resource_id = 'xyz'
+        self.assertEqual('xyz', rsrc.FnGetRefId())
+
+    def test_nova_keypair_refid_convergence_cache_data(self):
+        cache_data = {'kp': {
+            'uuid': mock.ANY,
+            'id': mock.ANY,
+            'action': 'CREATE',
+            'status': 'COMPLETE',
+            'reference_id': 'convg_xyz'
+        }}
+        stack = utils.parse_stack(self.kp_template, cache_data=cache_data)
+        rsrc = stack['kp']
+        self.assertEqual('convg_xyz', rsrc.FnGetRefId())

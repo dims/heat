@@ -11,7 +11,7 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-'''Implementation of SQLAlchemy backend.'''
+"""Implementation of SQLAlchemy backend."""
 import datetime
 import sys
 
@@ -56,8 +56,13 @@ def get_facade():
 
     return _facade
 
-get_engine = lambda: get_facade().get_engine()
-get_session = lambda: get_facade().get_session()
+
+def get_engine():
+    return get_facade().get_engine()
+
+
+def get_session():
+    return get_facade().get_session()
 
 
 def get_backend():
@@ -178,9 +183,9 @@ def resource_update(context, resource_id, values, atomic_key,
 
 
 def resource_data_get_all(resource, data=None):
-    """
-    Looks up resource_data by resource.id.  If data is encrypted,
-    this method will decrypt the results.
+    """Looks up resource_data by resource.id.
+
+    If data is encrypted, this method will decrypt the results.
     """
     if data is None:
         data = (model_query(resource.context, models.ResourceData)
@@ -200,8 +205,9 @@ def resource_data_get_all(resource, data=None):
 
 
 def resource_data_get(resource, key):
-    """Lookup value of resource's data by key. Decrypts resource data if
-    necessary.
+    """Lookup value of resource's data by key.
+
+    Decrypts resource data if necessary.
     """
     result = resource_data_get_by_key(resource.context,
                                       resource.id,
@@ -242,8 +248,9 @@ def stack_tags_get(context, stack_id):
 
 
 def resource_data_get_by_key(context, resource_id, key):
-    """Looks up resource_data by resource_id and key. Does not unencrypt
-    resource_data.
+    """Looks up resource_data by resource_id and key.
+
+    Does not decrypt resource_data.
     """
     result = (model_query(context, models.ResourceData)
               .filter_by(resource_id=resource_id)
@@ -361,12 +368,12 @@ def stack_get_all_by_owner_id(context, owner_id):
 
 
 def _get_sort_keys(sort_keys, mapping):
-    '''Returns an array containing only whitelisted keys
+    """Returns an array containing only whitelisted keys
 
     :param sort_keys: an array of strings
     :param mapping: a mapping from keys to DB column names
     :returns: filtered list of sort keys
-    '''
+    """
     if isinstance(sort_keys, six.string_types):
         sort_keys = [sort_keys]
     return [mapping[key] for key in sort_keys or [] if key in mapping]
@@ -555,6 +562,22 @@ def stack_lock_get_engine_id(stack_id):
             return lock.engine_id
 
 
+def persist_state_and_release_lock(context, stack_id, engine_id, values):
+    session = _session(context)
+    with session.begin():
+        rows_updated = (session.query(models.Stack)
+                        .filter(models.Stack.id == stack_id)
+                        .update(values, synchronize_session=False))
+        rows_affected = None
+        if rows_updated is not None and rows_updated > 0:
+            rows_affected = session.query(
+                models.StackLock
+            ).filter_by(stack_id=stack_id, engine_id=engine_id).delete()
+    session.expire_all()
+    if not rows_affected:
+        return True
+
+
 def stack_lock_steal(stack_id, old_engine_id, new_engine_id):
     session = get_session()
     with session.begin():
@@ -585,25 +608,10 @@ def stack_get_root_id(context, stack_id):
 
 
 def stack_count_total_resources(context, stack_id):
-
-    # start with a stack_get to confirm the context can access the stack
-    if stack_id is None or stack_get(context, stack_id) is None:
-        return 0
-
-    def nested_stack_ids(sid):
-        yield sid
-        for child in stack_get_all_by_owner_id(context, sid):
-            for stack in nested_stack_ids(child.id):
-                yield stack
-
-    stack_ids = list(nested_stack_ids(stack_id))
-
-    # count all resources which belong to the stacks
+    # count all resources which belong to the root stack
     results = model_query(
         context, models.Resource
-    ).filter(
-        models.Resource.stack_id.in_(stack_ids)
-    ).count()
+    ).filter(models.Resource.root_stack_id == stack_id).count()
     return results
 
 

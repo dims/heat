@@ -18,8 +18,10 @@ import six
 
 from heat.common import exception
 from heat.common.i18n import _
+from heat.engine.cfn import functions as cfn_funcs
 from heat.engine import constraints as constr
 from heat.engine import function
+from heat.engine.hot import functions as hot_funcs
 from heat.engine.hot import parameters as hot_param
 from heat.engine import parameters
 from heat.engine import support
@@ -38,8 +40,7 @@ SCHEMA_KEYS = (
 
 
 class Schema(constr.Schema):
-    """
-    Schema class for validating resource properties.
+    """Schema class for validating resource properties.
 
     This class is used for defining schema constraints for resource properties.
     It inherits generic validation features from the base Schema class and add
@@ -74,9 +75,7 @@ class Schema(constr.Schema):
 
     @classmethod
     def from_legacy(cls, schema_dict):
-        """
-        Return a Property Schema object from a legacy schema dictionary.
-        """
+        """Return a Property Schema object from a legacy schema dictionary."""
 
         # Check for fully-fledged Schema objects
         if isinstance(schema_dict, cls):
@@ -134,8 +133,7 @@ class Schema(constr.Schema):
 
     @classmethod
     def from_parameter(cls, param):
-        """
-        Return a Property Schema corresponding to a Parameter Schema.
+        """Return a Property Schema corresponding to a Parameter Schema.
 
         Convert a parameter schema from a provider template to a property
         Schema for the corresponding resource facade.
@@ -169,8 +167,7 @@ class Schema(constr.Schema):
                    default=param.default)
 
     def allowed_param_prop_type(self):
-        """
-        Return allowed type of Property Schema converted from parameter.
+        """Return allowed type of Property Schema converted from parameter.
 
         Especially, when generating Schema from parameter, Integer Property
         Schema will be supplied by Number parameter.
@@ -196,8 +193,7 @@ class Schema(constr.Schema):
 
 
 def schemata(schema_dicts):
-    """
-    Return dictionary of Schema objects for given dictionary of schemata.
+    """Return dictionary of Schema objects for given dictionary of schemata.
 
     The input schemata are converted from the legacy (dictionary-based)
     format to Schema objects where necessary.
@@ -354,9 +350,7 @@ class Properties(collections.Mapping):
 
     @staticmethod
     def schema_from_params(params_snippet):
-        """
-        Convert a template snippet that defines parameters
-        into a properties schema
+        """Convert a template snippet with parameters into a properties schema.
 
         :param params_snippet: parameter definition from a template
         :returns: an equivalent properties schema for the specified params
@@ -421,12 +415,11 @@ class Properties(collections.Mapping):
         if any(res.action == res.INIT for res in deps):
             return True
 
-    def _get_property_value(self, key, validate=False):
+    def get_user_value(self, key, validate=False):
         if key not in self:
             raise KeyError(_('Invalid Property %s') % key)
 
         prop = self.props[key]
-
         if key in self.data:
             try:
                 unresolved_value = self.data[key]
@@ -446,12 +439,18 @@ class Properties(collections.Mapping):
             # so handle this generically
             except Exception as e:
                 raise ValueError(six.text_type(e))
+
+    def _get_property_value(self, key, validate=False):
+        if key not in self:
+            raise KeyError(_('Invalid Property %s') % key)
+
+        prop = self.props[key]
+        if key in self.data:
+            return self.get_user_value(key, validate)
         elif prop.has_default():
             return prop.get_value(None, validate)
         elif prop.required():
             raise ValueError(_('Property %s not assigned') % key)
-        else:
-            return None
 
     def __getitem__(self, key):
         return self._get_property_value(key)
@@ -467,9 +466,7 @@ class Properties(collections.Mapping):
 
     @staticmethod
     def _param_def_from_prop(schema):
-        """
-        Return a template parameter definition corresponding to a property.
-        """
+        """Return a template parameter definition corresponding to property."""
         param_type_map = {
             schema.INTEGER: parameters.Schema.NUMBER,
             schema.STRING: parameters.Schema.STRING,
@@ -512,9 +509,7 @@ class Properties(collections.Mapping):
 
     @staticmethod
     def _prop_def_from_prop(name, schema):
-        """
-        Return a provider template property definition for a property.
-        """
+        """Return a provider template property definition for a property."""
         if schema.type == Schema.LIST:
             return {'Fn::Split': [',', {'Ref': name}]}
         else:
@@ -522,10 +517,7 @@ class Properties(collections.Mapping):
 
     @staticmethod
     def _hot_param_def_from_prop(schema):
-        """
-        Return parameter definition corresponding to a property for
-        hot template.
-        """
+        """Parameter definition corresponding to property for hot template."""
         param_type_map = {
             schema.INTEGER: hot_param.HOTParamSchema.NUMBER,
             schema.STRING: hot_param.HOTParamSchema.STRING,
@@ -564,15 +556,12 @@ class Properties(collections.Mapping):
 
     @staticmethod
     def _hot_prop_def_from_prop(name, schema):
-        """
-        Return a provider template property definition for a property.
-        """
+        """Return a provider template property definition for a property."""
         return {'get_param': name}
 
     @classmethod
     def schema_to_parameters_and_properties(cls, schema, template_type='cfn'):
-        """Generates properties with params resolved for a resource's
-        properties_schema.
+        """Generates properties with params resolved for a schema.
 
         :param schema: A resource type's properties_schema
         :returns: A tuple of params and properties dicts
@@ -672,17 +661,20 @@ class TranslationRule(object):
             raise ValueError(_('value must be list type when rule is Add.'))
 
     def execute_rule(self):
-        (source_key, source_data) = self.get_data_from_source_path(
-            self.source_path)
-        if self.value_path:
-            (value_key, value_data) = self.get_data_from_source_path(
-                self.value_path)
-            value = (value_data[value_key]
-                     if value_data and value_data.get(value_key)
-                     else self.value)
-        else:
-            (value_key, value_data) = None, None
-            value = self.value
+        try:
+            (source_key, source_data) = self.get_data_from_source_path(
+                self.source_path)
+            if self.value_path:
+                (value_key, value_data) = self.get_data_from_source_path(
+                    self.value_path)
+                value = (value_data[value_key]
+                         if value_data and value_data.get(value_key)
+                         else self.value)
+            else:
+                (value_key, value_data) = None, None
+                value = self.value
+        except AttributeError:
+            return
 
         if (source_data is None or (self.rule != self.DELETE and
                                     (value is None and
@@ -741,16 +733,37 @@ class TranslationRule(object):
                              for k, s in schemata.items())
             return props
 
+        def resolve_param(param):
+            """Check whether if given item is param and resolve, if it is."""
+            # NOTE(prazumovsky): If property uses removed in HOT function,
+            # we should not translate it for correct validating and raising
+            # validation error.
+            if isinstance(param, hot_funcs.Removed):
+                raise AttributeError(_('Property uses removed function.'))
+            if isinstance(param, (hot_funcs.GetParam, cfn_funcs.ParamRef)):
+                return function.resolve(param)
+            elif isinstance(param, list):
+                return [resolve_param(param_item) for param_item in param]
+            else:
+                return param
+
         source_key = path[0]
         data = self.properties.data
         props = self.properties.props
         for key in path:
             if isinstance(data, list):
                 source_key = key
-            elif data.get(key) is not None and isinstance(data.get(key),
-                                                          (list, dict)):
-                data = data.get(key)
-                props = get_props(props, key)
+            elif data.get(key) is not None:
+                # NOTE(prazumovsky): There's no need to resolve other functions
+                # because we can translate all function to another path. But if
+                # list or map type property equals to get_param function, need
+                # to resolve it for correct translating.
+                data[key] = resolve_param(data[key])
+                if isinstance(data[key], (dict, list)):
+                    data = data[key]
+                    props = get_props(props, key)
+                else:
+                    source_key = key
             elif data.get(key) is None:
                 if (self.rule == TranslationRule.DELETE or
                         (self.rule == TranslationRule.REPLACE and
@@ -765,6 +778,4 @@ class TranslationRule(object):
                     continue
                 data = data.get(key)
                 props = get_props(props, key)
-            else:
-                source_key = key
         return source_key, data

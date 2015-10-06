@@ -35,9 +35,7 @@ _RESOURCE_KEYS = (
 
 
 class HOTemplate20130523(template.Template):
-    """
-    A Heat Orchestration Template format stack template.
-    """
+    """A Heat Orchestration Template format stack template."""
 
     SECTIONS = (
         VERSION, DESCRIPTION, PARAMETER_GROUPS,
@@ -81,6 +79,12 @@ class HOTemplate20130523(template.Template):
         'resource_facade': hot_funcs.ResourceFacade,
         'Fn::ResourceFacade': cfn_funcs.ResourceFacade,
         'get_file': hot_funcs.GetFile,
+    }
+
+    deletion_policies = {
+        'Delete': rsrc_defn.ResourceDefinition.DELETE,
+        'Retain': rsrc_defn.ResourceDefinition.RETAIN,
+        'Snapshot': rsrc_defn.ResourceDefinition.SNAPSHOT
     }
 
     def __getitem__(self, section):
@@ -242,31 +246,35 @@ class HOTemplate20130523(template.Template):
 
     def resource_definitions(self, stack):
         resources = self.t.get(self.RESOURCES) or {}
+        parsed_resources = self.parse(stack, resources)
+        return dict((name, self.rsrc_defn_from_snippet(name, data))
+                    for name, data in parsed_resources.items())
 
-        def rsrc_defn_item(name, snippet):
-            data = self.parse(stack, snippet)
+    @staticmethod
+    def rsrc_defn_from_snippet(name, data):
+        depends = data.get(RES_DEPENDS_ON)
+        if isinstance(depends, six.string_types):
+            depends = [depends]
 
-            depends = data.get(RES_DEPENDS_ON)
-            if not depends:
-                depends = []
-            elif isinstance(depends, six.string_types):
-                depends = [depends]
+        deletion_policy = data.get(RES_DELETION_POLICY)
+        if deletion_policy is not None:
+            if deletion_policy not in HOTemplate20130523.deletion_policies:
+                msg = _('Invalid deletion policy "%s"') % deletion_policy
+                raise exception.StackValidationFailed(message=msg)
+            else:
+                deletion_policy = HOTemplate20130523.deletion_policies[
+                    deletion_policy]
+        kwargs = {
+            'resource_type': data.get(RES_TYPE),
+            'properties': data.get(RES_PROPERTIES),
+            'metadata': data.get(RES_METADATA),
+            'depends': depends,
+            'deletion_policy': deletion_policy,
+            'update_policy': data.get(RES_UPDATE_POLICY),
+            'description': None
+        }
 
-            kwargs = {
-                'resource_type': data.get(RES_TYPE),
-                'properties': data.get(RES_PROPERTIES),
-                'metadata': data.get(RES_METADATA),
-                'depends': depends,
-                'deletion_policy': data.get(RES_DELETION_POLICY),
-                'update_policy': data.get(RES_UPDATE_POLICY),
-                'description': None
-            }
-
-            defn = rsrc_defn.ResourceDefinition(name, **kwargs)
-            return name, defn
-
-        return dict(rsrc_defn_item(name, data)
-                    for name, data in resources.items())
+        return rsrc_defn.ResourceDefinition(name, **kwargs)
 
     def add_resource(self, definition, name=None):
         if name is None:
@@ -337,7 +345,7 @@ class HOTemplate20151015(HOTemplate20150430):
         'list_join': hot_funcs.JoinMultiple,
         'repeat': hot_funcs.Repeat,
         'resource_facade': hot_funcs.ResourceFacade,
-        'str_replace': hot_funcs.Replace,
+        'str_replace': hot_funcs.ReplaceJson,
 
         # functions added since 20150430
         'str_split': hot_funcs.StrSplit,

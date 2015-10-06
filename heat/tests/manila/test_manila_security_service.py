@@ -103,6 +103,7 @@ class ManilaSecurityServiceTest(common.HeatTestCase):
                                    self.stack)
         expected_state = (ct.CREATE, ct.COMPLETE)
         self.assertEqual(expected_state, ct.state)
+        self.assertEqual('security_services', ct.entity)
 
     def test_create_failed(self):
         ss = security_service.SecurityService('security_service',
@@ -121,24 +122,6 @@ class ManilaSecurityServiceTest(common.HeatTestCase):
         self.assertEqual(1, len(mapping))
         self.assertEqual(security_service.SecurityService,
                          mapping['OS::Manila::SecurityService'])
-
-    def test_delete(self):
-        ss = self._create_resource('security_service', self.rsrc_defn,
-                                   self.stack)
-        scheduler.TaskRunner(ss.delete)()
-        self.assertEqual((ss.DELETE, ss.COMPLETE), ss.state)
-        self.client.security_services.delete.assert_called_once_with(
-            ss.resource_id)
-
-    def test_delete_not_found(self):
-        ss = self._create_resource('security_service', self.rsrc_defn,
-                                   self.stack)
-        self.client.security_services.delete.side_effect = (
-            self.client.exceptions.NotFound())
-        scheduler.TaskRunner(ss.delete)()
-        self.assertEqual((ss.DELETE, ss.COMPLETE), ss.state)
-        self.client.security_services.delete.assert_called_once_with(
-            ss.resource_id)
 
     def test_update(self):
         ss = self._create_resource('security_service', self.rsrc_defn,
@@ -169,10 +152,3 @@ class ManilaSecurityServiceTest(common.HeatTestCase):
                                 scheduler.TaskRunner(ss.update, new_ss))
         msg = 'The Resource security_service requires replacement.'
         self.assertEqual(msg, six.text_type(err))
-
-    def test_show_resource(self):
-        sservice = self._create_resource('service', self.rsrc_defn, self.stack)
-        service = mock.Mock()
-        service.to_dict.return_value = {'attr': 'val'}
-        self.client.security_services.get.return_value = service
-        self.assertEqual({'attr': 'val'}, sservice.FnGetAtt('show'))

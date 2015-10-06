@@ -13,12 +13,14 @@
 
 import copy
 
+import mock
 import mox
 from neutronclient.v2_0 import client as neutronclient
 from novaclient import exceptions as nova_exceptions
 import six
 
 from heat.common import exception
+from heat.common import short_id
 from heat.common import template_format
 from heat.engine.clients.os import nova
 from heat.engine.resources.aws.ec2 import eip
@@ -371,6 +373,37 @@ class EIPTest(common.HeatTestCase):
         scheduler.TaskRunner(rsrc.delete)()
         self.assertEqual((rsrc.DELETE, rsrc.COMPLETE), rsrc.state)
         self.m.VerifyAll()
+
+    @mock.patch.object(eip.ElasticIp, '_ipaddress')
+    def test_FnGetRefId_resource_name(self, mock_ipaddr):
+        t = template_format.parse(ipassoc_template_validate)
+        stack = utils.parse_stack(t)
+        rsrc = stack['eip']
+        mock_ipaddr.return_value = None
+        self.assertEqual('eip', rsrc.FnGetRefId())
+
+    @mock.patch.object(eip.ElasticIp, '_ipaddress')
+    def test_FnGetRefId_resource_ip(self, mock_ipaddr):
+        t = template_format.parse(ipassoc_template_validate)
+        stack = utils.parse_stack(t)
+        rsrc = stack['eip']
+        mock_ipaddr.return_value = 'x.x.x.x'
+        self.assertEqual('x.x.x.x', rsrc.FnGetRefId())
+
+    def test_FnGetRefId_convergence_cache_data(self):
+        t = template_format.parse(ipassoc_template_validate)
+        template = tmpl.Template(t)
+        stack = parser.Stack(utils.dummy_context(), 'test', template,
+                             cache_data={
+                                 'eip': {
+                                     'uuid': mock.ANY,
+                                     'id': mock.ANY,
+                                     'action': 'CREATE',
+                                     'status': 'COMPLETE',
+                                     'reference_id': '1.1.1.1'}})
+
+        rsrc = stack['eip']
+        self.assertEqual('1.1.1.1', rsrc.FnGetRefId())
 
 
 class AllocTest(common.HeatTestCase):
@@ -886,3 +919,35 @@ class AllocTest(common.HeatTestCase):
         self.assertEqual((ass.UPDATE, ass.COMPLETE), ass.state)
 
         self.m.VerifyAll()
+
+    def test_eip_allocation_refid_resource_name(self):
+        t = template_format.parse(eip_template_ipassoc)
+        stack = utils.parse_stack(t)
+        rsrc = stack['IPAssoc']
+        rsrc.id = '123'
+        rsrc.uuid = '9bfb9456-3fe8-41f4-b318-9dba18eeef74'
+        rsrc.action = 'CREATE'
+        expected = '%s-%s-%s' % (rsrc.stack.name,
+                                 rsrc.name,
+                                 short_id.get_id(rsrc.uuid))
+        self.assertEqual(expected, rsrc.FnGetRefId())
+
+    def test_eip_allocation_refid_resource_id(self):
+        t = template_format.parse(eip_template_ipassoc)
+        stack = utils.parse_stack(t)
+        rsrc = stack['IPAssoc']
+        rsrc.resource_id = 'phy-rsrc-id'
+        self.assertEqual('phy-rsrc-id', rsrc.FnGetRefId())
+
+    def test_eip_allocation_refid_convergence_cache_data(self):
+        t = template_format.parse(eip_template_ipassoc)
+        cache_data = {'IPAssoc': {
+            'uuid': mock.ANY,
+            'id': mock.ANY,
+            'action': 'CREATE',
+            'status': 'COMPLETE',
+            'reference_id': 'convg_xyz'
+        }}
+        stack = utils.parse_stack(t, cache_data=cache_data)
+        rsrc = stack['IPAssoc']
+        self.assertEqual('convg_xyz', rsrc.FnGetRefId())

@@ -11,9 +11,7 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-"""
-Stack endpoint for Heat v1 REST API.
-"""
+"""Stack endpoint for Heat v1 REST API."""
 
 import contextlib
 from oslo_log import log as logging
@@ -39,8 +37,9 @@ LOG = logging.getLogger(__name__)
 
 
 class InstantiationData(object):
-    """
-    The data accompanying a PUT or POST request to create or update a stack.
+    """The data to create or update a stack.
+
+    The data accompanying a PUT or POST request.
     """
 
     PARAMS = (
@@ -60,12 +59,13 @@ class InstantiationData(object):
     )
 
     def __init__(self, data, patch=False):
-        """
-        Initialise from the request object.
+        """Initialise from the request object.
+
         If called from the PATCH api, insert a flag for the engine code
         to distinguish.
         """
         self.data = data
+        self.patch = patch
         if patch:
             self.data[rpc_api.PARAM_EXISTING] = True
 
@@ -80,18 +80,18 @@ class InstantiationData(object):
             raise exc.HTTPBadRequest(msg)
 
     def stack_name(self):
-        """
-        Return the stack name.
-        """
+        """Return the stack name."""
         if self.PARAM_STACK_NAME not in self.data:
             raise exc.HTTPBadRequest(_("No stack name specified"))
         return self.data[self.PARAM_STACK_NAME]
 
     def template(self):
-        """
+        """Get template file contents.
+
         Get template file contents, either inline, from stack adopt data or
         from a URL, in JSON or YAML format.
         """
+        template_data = None
         if rpc_api.PARAM_ADOPT_STACK_DATA in self.data:
             adopt_data = self.data[rpc_api.PARAM_ADOPT_STACK_DATA]
             try:
@@ -112,15 +112,19 @@ class InstantiationData(object):
             except IOError as ex:
                 err_reason = _('Could not retrieve template: %s') % ex
                 raise exc.HTTPBadRequest(err_reason)
-        else:
-            raise exc.HTTPBadRequest(_("No template specified"))
+
+        if template_data is None:
+            if self.patch:
+                return None
+            else:
+                raise exc.HTTPBadRequest(_("No template specified"))
 
         with self.parse_error_check('Template'):
             return template_format.parse(template_data)
 
     def environment(self):
-        """
-        Get the user-supplied environment for the stack in YAML format.
+        """Get the user-supplied environment for the stack in YAML format.
+
         If the user supplied Parameters then merge these into the
         environment global options.
         """
@@ -142,17 +146,15 @@ class InstantiationData(object):
         return self.data.get(self.PARAM_FILES, {})
 
     def args(self):
-        """
-        Get any additional arguments supplied by the user.
-        """
+        """Get any additional arguments supplied by the user."""
         params = self.data.items()
         return dict((k, v) for k, v in params if k not in self.PARAMS)
 
 
 class StackController(object):
-    """
-    WSGI controller for stacks resource in Heat v1 API
-    Implements the API actions
+    """WSGI controller for stacks resource in Heat v1 API.
+
+    Implements the API actions.
     """
     # Define request scope (must match what is in policy.json)
     REQUEST_SCOPE = 'stacks'
@@ -186,6 +188,8 @@ class StackController(object):
 
     def _index(self, req, tenant_safe=True):
         filter_whitelist = {
+            # usage of keys in this list are not encouraged, please use
+            # rpc_api.STACK_KEYS instead
             'id': 'mixed',
             'status': 'mixed',
             'name': 'mixed',
@@ -208,7 +212,25 @@ class StackController(object):
             'not_tags_any': 'single',
         }
         params = util.get_allowed_params(req.params, whitelist)
-        filter_params = util.get_allowed_params(req.params, filter_whitelist)
+        stack_keys = dict.fromkeys(rpc_api.STACK_KEYS, 'mixed')
+        unsupported = (
+            rpc_api.STACK_ID,  # not user visible
+            rpc_api.STACK_CAPABILITIES,  # not supported
+            rpc_api.STACK_CREATION_TIME,  # don't support timestamp
+            rpc_api.STACK_DELETION_TIME,  # don't support timestamp
+            rpc_api.STACK_DESCRIPTION,  # not supported
+            rpc_api.STACK_NOTIFICATION_TOPICS,  # not supported
+            rpc_api.STACK_OUTPUTS,  # not in database
+            rpc_api.STACK_PARAMETERS,  # not in this table
+            rpc_api.STACK_TAGS,  # tags query following a specific guideline
+            rpc_api.STACK_TMPL_DESCRIPTION,  # not supported
+            rpc_api.STACK_UPDATED_TIME,  # don't support timestamp
+        )
+        for key in unsupported:
+            stack_keys.pop(key)
+        # downward compatibility
+        stack_keys.update(filter_whitelist)
+        filter_params = util.get_allowed_params(req.params, stack_keys)
 
         show_deleted = False
         p_name = rpc_api.PARAM_SHOW_DELETED
@@ -298,9 +320,7 @@ class StackController(object):
 
     @util.policy_enforce
     def index(self, req):
-        """
-        Lists summary information for all stacks
-        """
+        """Lists summary information for all stacks."""
         global_tenant = False
         name = rpc_api.PARAM_GLOBAL_TENANT
         if name in req.params:
@@ -315,18 +335,14 @@ class StackController(object):
 
     @util.policy_enforce
     def detail(self, req):
-        """
-        Lists detailed information for all stacks
-        """
+        """Lists detailed information for all stacks."""
         stacks = self.rpc_client.list_stacks(req.context)
 
         return {'stacks': [stacks_view.format_stack(req, s) for s in stacks]}
 
     @util.policy_enforce
     def preview(self, req, body):
-        """
-        Preview the outcome of a template and its params
-        """
+        """Preview the outcome of a template and its params."""
 
         data = InstantiationData(body)
         args = self.prepare_args(data)
@@ -352,9 +368,7 @@ class StackController(object):
 
     @util.policy_enforce
     def create(self, req, body):
-        """
-        Create a new stack
-        """
+        """Create a new stack."""
         data = InstantiationData(body)
 
         args = self.prepare_args(data)
@@ -373,9 +387,7 @@ class StackController(object):
 
     @util.policy_enforce
     def lookup(self, req, stack_name, path='', body=None):
-        """
-        Redirect to the canonical URL for a stack
-        """
+        """Redirect to the canonical URL for a stack."""
         try:
             identity = dict(identifier.HeatIdentifier.from_arn(stack_name))
         except ValueError:
@@ -394,9 +406,7 @@ class StackController(object):
 
     @util.identified_stack
     def show(self, req, identity):
-        """
-        Gets detailed information for a stack
-        """
+        """Gets detailed information for a stack."""
 
         stack_list = self.rpc_client.show_stack(req.context,
                                                 identity)
@@ -410,9 +420,7 @@ class StackController(object):
 
     @util.identified_stack
     def template(self, req, identity):
-        """
-        Get the template body for an existing stack
-        """
+        """Get the template body for an existing stack."""
 
         templ = self.rpc_client.get_template(req.context,
                                              identity)
@@ -425,9 +433,7 @@ class StackController(object):
 
     @util.identified_stack
     def update(self, req, identity, body):
-        """
-        Update an existing stack with a new template and/or parameters
-        """
+        """Update an existing stack with a new template and/or parameters."""
         data = InstantiationData(body)
 
         args = self.prepare_args(data)
@@ -442,7 +448,8 @@ class StackController(object):
 
     @util.identified_stack
     def update_patch(self, req, identity, body):
-        """
+        """Update an existing stack with a new template.
+
         Update an existing stack with a new template by patching the parameters
         Add the flag patch to the args so the engine code can distinguish
         """
@@ -460,9 +467,7 @@ class StackController(object):
 
     @util.identified_stack
     def preview_update(self, req, identity, body):
-        """
-        Preview an update to an existing stack with a new template/parameters
-        """
+        """Preview update for existing stack with a new template/parameters."""
         data = InstantiationData(body)
 
         args = self.prepare_args(data)
@@ -477,10 +482,24 @@ class StackController(object):
         return {'resource_changes': changes}
 
     @util.identified_stack
+    def preview_update_patch(self, req, identity, body):
+        """Preview PATCH update for existing stack."""
+        data = InstantiationData(body, patch=True)
+
+        args = self.prepare_args(data)
+        changes = self.rpc_client.preview_update_stack(
+            req.context,
+            identity,
+            data.template(),
+            data.environment(),
+            data.files(),
+            args)
+
+        return {'resource_changes': changes}
+
+    @util.identified_stack
     def delete(self, req, identity):
-        """
-        Delete the specified stack
-        """
+        """Delete the specified stack."""
 
         res = self.rpc_client.delete_stack(req.context,
                                            identity,
@@ -493,7 +512,8 @@ class StackController(object):
 
     @util.identified_stack
     def abandon(self, req, identity):
-        """
+        """Abandons specified stack.
+
         Abandons specified stack by deleting the stack and it's resources
         from the database, but underlying resources will not be deleted.
         """
@@ -502,16 +522,27 @@ class StackController(object):
 
     @util.policy_enforce
     def validate_template(self, req, body):
-        """
-        Implements the ValidateTemplate API action
-        Validates the specified template
+        """Implements the ValidateTemplate API action.
+
+        Validates the specified template.
         """
 
         data = InstantiationData(body)
 
+        whitelist = {'show_nested': 'single'}
+        params = util.get_allowed_params(req.params, whitelist)
+
+        show_nested = False
+        p_name = rpc_api.PARAM_SHOW_NESTED
+        if p_name in params:
+            params[p_name] = self._extract_bool_param(p_name, params[p_name])
+            show_nested = params[p_name]
+
         result = self.rpc_client.validate_template(req.context,
                                                    data.template(),
-                                                   data.environment())
+                                                   data.environment(),
+                                                   files=data.files(),
+                                                   show_nested=show_nested)
 
         if 'Error' in result:
             raise exc.HTTPBadRequest(result['Error'])
@@ -520,9 +551,7 @@ class StackController(object):
 
     @util.policy_enforce
     def list_resource_types(self, req):
-        """
-        Returns a list of valid resource types that may be used in a template.
-        """
+        """Returns a resource types list which may be used in template."""
         support_status = req.params.get('support_status')
         type_name = req.params.get('name')
         version = req.params.get('version')
@@ -535,9 +564,7 @@ class StackController(object):
 
     @util.policy_enforce
     def list_template_versions(self, req):
-        """
-        Returns a list of available template versions
-        """
+        """Returns a list of available template versions."""
         return {
             'template_versions':
             self.rpc_client.list_template_versions(req.context)
@@ -545,9 +572,7 @@ class StackController(object):
 
     @util.policy_enforce
     def list_template_functions(self, req, template_version):
-        """
-        Returns a list of available functions in a given template
-        """
+        """Returns a list of available functions in a given template."""
         return {
             'template_functions':
             self.rpc_client.list_template_functions(req.context,
@@ -556,16 +581,12 @@ class StackController(object):
 
     @util.policy_enforce
     def resource_schema(self, req, type_name):
-        """
-        Returns the schema of the given resource type.
-        """
+        """Returns the schema of the given resource type."""
         return self.rpc_client.resource_schema(req.context, type_name)
 
     @util.policy_enforce
     def generate_template(self, req, type_name):
-        """
-        Generates a template based on the specified type.
-        """
+        """Generates a template based on the specified type."""
         template_type = 'cfn'
         if rpc_api.TEMPLATE_TYPE in req.params:
             try:
@@ -613,7 +634,7 @@ class StackSerializer(serializers.JSONResponseSerializer):
 
     def _populate_response_header(self, response, location, status):
         response.status = status
-        response.headers['Location'] = location.encode('utf-8')
+        response.headers['Location'] = location
         response.headers['Content-Type'] = 'application/json'
         return response
 
@@ -626,9 +647,7 @@ class StackSerializer(serializers.JSONResponseSerializer):
 
 
 def create_resource(options):
-    """
-    Stacks resource factory method.
-    """
+    """Stacks resource factory method."""
     deserializer = wsgi.JSONRequestDeserializer()
     serializer = StackSerializer()
     return wsgi.Resource(StackController(options), deserializer, serializer)

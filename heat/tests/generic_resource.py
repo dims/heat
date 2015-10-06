@@ -97,6 +97,17 @@ class ResourceWithProps(GenericResource):
         'FooInt': properties.Schema(properties.Schema.INTEGER)}
 
 
+class ResourceWithPropsRefPropOnDelete(ResourceWithProps):
+    def check_delete_complete(self, cookie):
+        return self.properties['FooInt'] is not None
+
+
+class ResourceWithPropsRefPropOnValidate(ResourceWithProps):
+    def validate(self):
+        super(ResourceWithPropsRefPropOnValidate, self).validate()
+        self.properties['FooInt'] is not None
+
+
 class ResourceWithPropsAndAttrs(ResourceWithProps):
     attributes_schema = {'Bar': attributes.Schema('Something.')}
 
@@ -143,6 +154,15 @@ class ResourceWithComplexAttributes(GenericResource):
 class ResourceWithRequiredProps(GenericResource):
     properties_schema = {'Foo': properties.Schema(properties.Schema.STRING,
                                                   required=True)}
+
+
+class ResourceWithMultipleRequiredProps(GenericResource):
+    properties_schema = {'Foo1': properties.Schema(properties.Schema.STRING,
+                                                   required=True),
+                         'Foo2': properties.Schema(properties.Schema.STRING,
+                                                   required=True),
+                         'Foo3': properties.Schema(properties.Schema.STRING,
+                                                   required=True)}
 
 
 class ResourceWithRequiredPropsAndEmptyAttrs(GenericResource):

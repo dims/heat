@@ -114,6 +114,7 @@ class ServiceStackUpdateTest(common.HeatTestCase):
         self.assertEqual({'KeyName': 'test'}, stk.t.env.params)
 
         with mock.patch('heat.engine.stack.Stack') as mock_stack:
+            stk.update = mock.Mock()
             mock_stack.load.return_value = stk
             mock_stack.validate.return_value = None
             result = self.man.update_stack(self.ctx, stk.identifier(),
@@ -148,6 +149,7 @@ class ServiceStackUpdateTest(common.HeatTestCase):
                          stk.t.env.params)
 
         with mock.patch('heat.engine.stack.Stack') as mock_stack:
+            stk.update = mock.Mock()
             mock_stack.load.return_value = stk
             mock_stack.validate.return_value = None
             result = self.man.update_stack(self.ctx, stk.identifier(),
@@ -209,6 +211,7 @@ class ServiceStackUpdateTest(common.HeatTestCase):
                           'newfoo2.yaml': 'newfoo',
                           'myother.yaml': 'myother'}
         with mock.patch('heat.engine.stack.Stack') as mock_stack:
+            stk.update = mock.Mock()
             mock_stack.load.return_value = stk
             mock_stack.validate.return_value = None
             result = self.man.update_stack(self.ctx, stk.identifier(),
@@ -250,6 +253,7 @@ class ServiceStackUpdateTest(common.HeatTestCase):
                         'parameters': {},
                         'resource_registry': {'resources': {}}}
         with mock.patch('heat.engine.stack.Stack') as mock_stack:
+            stk.update = mock.Mock()
             mock_stack.load.return_value = stk
             mock_stack.validate.return_value = None
             result = self.man.update_stack(self.ctx, stk.identifier(),
@@ -435,13 +439,12 @@ class ServiceStackUpdateTest(common.HeatTestCase):
             }
         }
         template = templatem.Template(tpl)
-
         create_stack = stack.Stack(self.ctx, stack_name, template)
         sid = create_stack.store()
         create_stack.create()
         self.assertEqual((create_stack.CREATE, create_stack.COMPLETE),
                          create_stack.state)
-
+        create_stack._persist_state()
         s = stack_object.Stack.get_by_id(self.ctx, sid)
         old_stack = stack.Stack.load(self.ctx, stack=s)
 
@@ -456,6 +459,7 @@ class ServiceStackUpdateTest(common.HeatTestCase):
         result = self.man.update_stack(self.ctx, create_stack.identifier(),
                                        tpl, {}, None, {})
 
+        old_stack._persist_state()
         self.assertEqual((old_stack.UPDATE, old_stack.COMPLETE),
                          old_stack.state)
         self.assertEqual(create_stack.identifier(), result)
@@ -596,6 +600,68 @@ class ServiceStackUpdateTest(common.HeatTestCase):
             tenant_id='test_tenant_id', timeout_mins=60,
             user_creds_id=u'1', username='test_username')
         mock_load.assert_called_once_with(self.ctx, stack=s)
+
+    def test_stack_update_existing_template(self):
+        '''Update a stack using the same template.'''
+        stack_name = 'service_update_test_stack_existing_template'
+        api_args = {rpc_api.PARAM_TIMEOUT: 60,
+                    rpc_api.PARAM_EXISTING: True}
+        t = template_format.parse(tools.wp_template)
+        # Don't actually run the update as the mocking breaks it, instead
+        # we just ensure the expected template is passed in to the updated
+        # template, and that the update task is scheduled.
+        self.man.thread_group_mgr = tools.DummyThreadGroupMgrLogStart()
+
+        params = {}
+        stack = utils.parse_stack(t, stack_name=stack_name,
+                                  params=params)
+        stack.set_stack_user_project_id('1234')
+        self.assertEqual(stack.t.t,
+                         t)
+        stack.action = stack.CREATE
+        stack.status = stack.COMPLETE
+
+        with mock.patch('heat.engine.stack.Stack') as mock_stack:
+            mock_stack.load.return_value = stack
+            mock_stack.validate.return_value = None
+            result = self.man.update_stack(self.ctx, stack.identifier(),
+                                           None,
+                                           params,
+                                           None, api_args)
+            tmpl = mock_stack.call_args[0][2]
+            self.assertEqual(t,
+                             tmpl.t)
+            self.assertEqual(stack.identifier(), result)
+            self.assertEqual(1, len(self.man.thread_group_mgr.started))
+
+    def test_stack_update_existing_failed(self):
+        '''Update a stack using the same template doesn't work when FAILED.'''
+        stack_name = 'service_update_test_stack_existing_template'
+        api_args = {rpc_api.PARAM_TIMEOUT: 60,
+                    rpc_api.PARAM_EXISTING: True}
+        t = template_format.parse(tools.wp_template)
+        # Don't actually run the update as the mocking breaks it, instead
+        # we just ensure the expected template is passed in to the updated
+        # template, and that the update task is scheduled.
+        self.man.thread_group_mgr = tools.DummyThreadGroupMgrLogStart()
+
+        params = {}
+        stack = utils.parse_stack(t, stack_name=stack_name,
+                                  params=params)
+        stack.set_stack_user_project_id('1234')
+        self.assertEqual(stack.t.t,
+                         t)
+        stack.action = stack.UPDATE
+        stack.status = stack.FAILED
+
+        ex = self.assertRaises(dispatcher.ExpectedException,
+                               self.man.update_stack,
+                               self.ctx, stack.identifier(),
+                               None, params, None, api_args)
+
+        self.assertEqual(exception.NotSupported, ex.exc_info[0])
+        self.assertIn("PATCH update to non-COMPLETE stack",
+                      six.text_type(ex.exc_info[1]))
 
 
 class ServiceStackUpdatePreviewTest(common.HeatTestCase):

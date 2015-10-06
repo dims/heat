@@ -15,7 +15,6 @@ import copy
 
 import mock
 
-from heat.common import exception
 from heat.common import template_format
 from heat.engine import resources
 from heat.engine.resources.openstack.manila import share_type as mshare_type
@@ -78,28 +77,7 @@ class ManilaShareTypeTest(common.HeatTestCase):
             name="test_share_type", spec_driver_handles_share_servers=True,
             is_public=False)
         fake_share_type.set_keys.assert_called_once_with({"test": "test"})
-
-    def test_share_type_delete(self):
-        share_type = self._init_share("stack_share_type_delete")
-        fake_share_type = mock.MagicMock(id="type_id")
-        share_type.client().share_types.create.return_value = fake_share_type
-        scheduler.TaskRunner(share_type.create)()
-
-        scheduler.TaskRunner(share_type.delete)()
-        share_type.client().share_types.delete.assert_called_once_with(
-            "type_id")
-
-    def test_share_type_delete_not_found(self):
-        share_type = self._init_share("stack_share_type_delete_not_found")
-        fake_share_type = mock.MagicMock(id="type_id")
-        share_type.client().share_types.create.return_value = fake_share_type
-        scheduler.TaskRunner(share_type.create)()
-
-        exc = exception.NotFound()
-        share_type.client().share_types.delete.side_effect = exc
-        scheduler.TaskRunner(share_type.delete)()
-        share_type.client_plugin().ignore_not_found.assert_called_once_with(
-            exc)
+        self.assertEqual('share_types', share_type.entity)
 
     def test_share_type_update(self):
         share_type = self._init_share("stack_share_type_update")
@@ -117,11 +95,3 @@ class ManilaShareTypeTest(common.HeatTestCase):
         fake_share_type.unset_keys.assert_called_once_with({"test": "test"})
         fake_share_type.set_keys.assert_called_with(
             updated_props[mshare_type.ManilaShareType.EXTRA_SPECS])
-
-    def test_show_resource(self):
-        share_type = self._init_share("stack_share_type_create")
-        share_type.client().share_types.create.return_value = mock.Mock(
-            id='type_id')
-        share_type.client().share_types.get.return_value = DummyShare()
-        scheduler.TaskRunner(share_type.create)()
-        self.assertEqual({'attr': 'val'}, share_type.FnGetAtt('show'))

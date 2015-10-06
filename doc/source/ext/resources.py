@@ -30,7 +30,8 @@ _CODE_NAMES = {'2013.1': 'Grizzly',
                '2014.1': 'Icehouse',
                '2014.2': 'Juno',
                '2015.1': 'Kilo',
-               '5.0.0': 'Liberty'}
+               '5.0.0': 'Liberty',
+               '6.0.0': 'Mitaka'}
 
 all_resources = {}
 
@@ -140,7 +141,10 @@ class ResourcePages(compat.Directive):
         if not prop:
             return 'Value'
         if prop.type == properties.Schema.LIST:
-            schema = lambda i: prop.schema[i] if prop.schema else None
+
+            def schema(i):
+                return prop.schema[i] if prop.schema else None
+
             sub_type = [self._prop_syntax_example(schema(i))
                         for i in range(2)]
             return '[%s, %s, ...]' % tuple(sub_type)
@@ -310,7 +314,7 @@ resources:
     def contribute_update_policy(self, parent):
         if not self.update_policy_schemata:
             return
-        section = self._section(parent, _('UpdatePolicy'), '%s-updpolicy')
+        section = self._section(parent, _('update_policy'), '%s-updpolicy')
         for prop_key, prop in sorted(self.update_policy_schemata.items(),
                                      self.cmp_prop):
             self.contribute_property(section, prop_key, prop)

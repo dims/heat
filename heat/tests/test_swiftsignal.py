@@ -81,12 +81,12 @@ obj_header = {
 }
 
 
-def create_stack(template, stack_id=None):
+def create_stack(template, stack_id=None, cache_data=None):
     tmpl = template_format.parse(template)
     template = templatem.Template(tmpl)
     ctx = utils.dummy_context(tenant_id='test_tenant')
     st = stack.Stack(ctx, 'test_st', template,
-                     disable_rollback=True)
+                     disable_rollback=True, cache_data=cache_data)
 
     # Stub out the stack ID so we have a known value
     if stack_id is None:
@@ -281,6 +281,18 @@ class SwiftSignalHandleTest(common.HeatTestCase):
                                                       handle.properties.data)
         scheduler.TaskRunner(handle.update, update_snippet)()
         self.assertEqual(old_url, rsrc.FnGetRefId())
+
+    def test_swift_handle_refid_convergence_cache_data(self):
+        cache_data = {'test_wait_condition_handle': {
+            'uuid': mock.ANY,
+            'id': mock.ANY,
+            'action': 'CREATE',
+            'status': 'COMPLETE',
+            'reference_id': 'convg_xyz'
+        }}
+        st = create_stack(swiftsignalhandle_template, cache_data=cache_data)
+        rsrc = st['test_wait_condition_handle']
+        self.assertEqual('convg_xyz', rsrc.FnGetRefId())
 
 
 class SwiftSignalTest(common.HeatTestCase):
@@ -827,6 +839,36 @@ class SwiftSignalTest(common.HeatTestCase):
         self.assertEqual(('CREATE', 'COMPLETE'), st.state)
         wc = st['test_wait_condition']
         self.assertEqual("null", wc.FnGetAtt('data'))
+
+    @mock.patch.object(swift.SwiftClientPlugin, '_create')
+    @mock.patch.object(resource.Resource, 'physical_resource_name')
+    def test_swift_objects_invisible(self, mock_name, mock_swift):
+        st = create_stack(swiftsignal_template)
+        handle = st['test_wait_condition_handle']
+
+        mock_swift_object = mock.Mock()
+        mock_swift.return_value = mock_swift_object
+        mock_swift_object.url = "http://fake-host.com:8080/v1/AUTH_1234"
+        mock_swift_object.head_account.return_value = {
+            'x-account-meta-temp-url-key': '123456'
+        }
+        obj_name = "%s-%s-abcdefghijkl" % (st.name, handle.name)
+        mock_name.return_value = obj_name
+
+        mock_swift_object.get_container.side_effect = (
+            (container_header, []),   # Just-created objects aren't visible yet
+            (container_header, []),
+            (container_header, []),
+            (container_header, []),
+            cont_index(obj_name, 1),
+        )
+        mock_swift_object.get_object.side_effect = (
+            (obj_header, json.dumps({'id': 1})),
+            (obj_header, json.dumps({'id': 2})),
+        )
+
+        st.create()
+        self.assertEqual(('CREATE', 'COMPLETE'), st.state)
 
     @mock.patch.object(swift.SwiftClientPlugin, '_create')
     @mock.patch.object(resource.Resource, 'physical_resource_name')

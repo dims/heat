@@ -53,7 +53,6 @@ class DummyShare(object):
         self.created_at = 'ca'
         self.status = 's'
         self.project_id = 'p_id'
-        self.to_dict = lambda: {'attr': 'val'}
 
 
 class ManilaShareTest(common.HeatTestCase):
@@ -122,6 +121,7 @@ class ManilaShareTest(common.HeatTestCase):
                          "Metadata" + message_end)
         self.assertTrue(kwargs["is_public"])
         share.client().shares.get.assert_called_once_with(self.fake_share.id)
+        self.assertEqual('shares', share.entity)
 
     def test_share_create_fail(self):
         share = self._init_share("stack_share_create_fail")
@@ -138,22 +138,6 @@ class ManilaShareTest(common.HeatTestCase):
                                 share.check_create_complete,
                                 self.deleting_share)
         self.assertIn("Unknown status", six.text_type(exc))
-
-    def test_share_delete(self):
-        share = self._create_share("stack_share_delete")
-        share.client().shares.get.side_effect = exception.NotFound()
-        share.client_plugin().ignore_not_found.return_value = None
-        scheduler.TaskRunner(share.delete)()
-        share.client().shares.delete.assert_called_once_with(
-            self.fake_share.id)
-
-    def test_share_delete_fail(self):
-        share = self._create_share("stack_share_delete_fail")
-        share.client().shares.delete.return_value = None
-        share.client().shares.get.return_value = self.failed_share
-        exc = self.assertRaises(exception.ResourceFailure,
-                                scheduler.TaskRunner(share.delete))
-        self.assertIn("Error during deleting share", six.text_type(exc))
 
     def test_share_check(self):
         share = self._create_share("stack_share_check")
@@ -241,4 +225,3 @@ class ManilaShareTest(common.HeatTestCase):
         self.assertEqual('ca', share.FnGetAtt('created_at'))
         self.assertEqual('s', share.FnGetAtt('status'))
         self.assertEqual('p_id', share.FnGetAtt('project_id'))
-        self.assertEqual({'attr': 'val'}, share.FnGetAtt('show'))

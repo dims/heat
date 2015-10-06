@@ -216,11 +216,21 @@ class LaunchConfiguration(resource.Resource):
                 self.properties_schema, self.context)
             self._update_stored_properties()
 
-    def handle_update(self, json_snippet, tmpl_diff, prop_diff):
+    def _needs_update(self, after, before, after_props, before_props,
+                      prev_resource, check_init_complete=True):
+        result = super(LaunchConfiguration, self)._needs_update(
+            after, before, after_props, before_props, prev_resource,
+            check_init_complete=check_init_complete)
+
+        tmpl_diff = self.update_template_diff(function.resolve(after),
+                                              before)
+
         if 'Metadata' in tmpl_diff:
             raise exception.UpdateReplace(self.name)
 
-    def FnGetRefId(self):
+        return result
+
+    def get_reference_id(self):
         return self.physical_resource_name_or_FnGetRefId()
 
     def validate(self):

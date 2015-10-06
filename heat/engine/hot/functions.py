@@ -14,8 +14,9 @@
 import collections
 import hashlib
 import itertools
-
 import six
+
+from oslo_serialization import jsonutils
 
 from heat.common import exception
 from heat.common.i18n import _
@@ -25,8 +26,7 @@ from heat.engine import function
 
 
 class GetParam(function.Function):
-    '''
-    A function for resolving parameter references.
+    """A function for resolving parameter references.
 
     Takes the form::
 
@@ -38,7 +38,7 @@ class GetParam(function.Function):
           - <param_name>
           - <path1>
           - ...
-    '''
+    """
 
     def __init__(self, stack, fn_name, args):
         super(GetParam, self).__init__(stack, fn_name, args)
@@ -90,8 +90,7 @@ class GetParam(function.Function):
 
 
 class GetAttThenSelect(cfn_funcs.GetAtt):
-    '''
-    A function for resolving resource attributes.
+    """A function for resolving resource attributes.
 
     Takes the form::
 
@@ -100,7 +99,7 @@ class GetAttThenSelect(cfn_funcs.GetAtt):
           - <attribute_name>
           - <path1>
           - ...
-    '''
+    """
 
     def _parse_args(self):
         if (not isinstance(self.args, collections.Sequence) or
@@ -221,8 +220,7 @@ class GetAttAllAttributes(GetAtt):
 
 
 class Replace(cfn_funcs.Replace):
-    '''
-    A function for performing string substitutions.
+    """A function for performing string substitutions.
 
     Takes the form::
 
@@ -239,7 +237,7 @@ class Replace(cfn_funcs.Replace):
 
     This is implemented using Python's str.replace on each key. The order in
     which replacements are performed is undefined.
-    '''
+    """
 
     def _parse_args(self):
         if not isinstance(self.args, collections.Mapping):
@@ -261,9 +259,59 @@ class Replace(cfn_funcs.Replace):
             return mapping, string
 
 
+class ReplaceJson(Replace):
+    '''
+    A function for performing string substitutions.
+
+    Behaves the same as Replace, but tolerates non-string parameter
+    values, e.g map/list - these are serialized as json before doing
+    the string substitution.
+    '''
+
+    def result(self):
+        template = function.resolve(self._string)
+        mapping = function.resolve(self._mapping)
+
+        if not isinstance(template, six.string_types):
+            raise TypeError(_('"%s" template must be a string') % self.fn_name)
+
+        if not isinstance(mapping, collections.Mapping):
+            raise TypeError(_('"%s" params must be a map') % self.fn_name)
+
+        def replace(string, change):
+            placeholder, value = change
+
+            if not isinstance(placeholder, six.string_types):
+                raise TypeError(_('"%s" param placeholders must be strings') %
+                                self.fn_name)
+
+            if value is None:
+                value = ''
+
+            if not isinstance(value,
+                              (six.string_types, six.integer_types,
+                               float, bool)):
+                if isinstance(value,
+                              (collections.Mapping, collections.Sequence)):
+                    try:
+                        value = jsonutils.dumps(value, default=None)
+                    except TypeError:
+                        raise TypeError(_('"%(name)s" params must be strings, '
+                                          'numbers, list or map. '
+                                          'Failed to json serialize %(value)s'
+                                          ) % {'name': self.fn_name,
+                                               'value': value})
+                else:
+                    raise TypeError(_('"%s" params must be strings, numbers, '
+                                      'list or map. ') % self.fn_name)
+
+            return string.replace(placeholder, six.text_type(value))
+
+        return six.moves.reduce(replace, six.iteritems(mapping), template)
+
+
 class GetFile(function.Function):
-    """
-    A function for including a file inline.
+    """A function for including a file inline.
 
     Takes the form::
 
@@ -294,8 +342,7 @@ class GetFile(function.Function):
 
 
 class Join(cfn_funcs.Join):
-    '''
-    A function for joining strings.
+    """A function for joining strings.
 
     Takes the form::
 
@@ -304,13 +351,11 @@ class Join(cfn_funcs.Join):
     And resolves to::
 
         "<string_1><delim><string_2><delim>..."
+    """
 
-    '''
 
-
-class JoinMultiple(cfn_funcs.Join):
-    '''
-    A function for joining strings.
+class JoinMultiple(function.Function):
+    """A function for joining strings.
 
     Takes the form::
 
@@ -321,9 +366,10 @@ class JoinMultiple(cfn_funcs.Join):
         "<string_1><delim><string_2><delim>..."
 
     Optionally multiple lists may be specified, which will also be joined.
-    '''
+    """
 
     def __init__(self, stack, fn_name, args):
+        super(JoinMultiple, self).__init__(stack, fn_name, args)
         example = '"%s" : [ " ", [ "str1", "str2"] ...]' % fn_name
         fmt_data = {'fn_name': fn_name,
                     'example': example}
@@ -333,24 +379,57 @@ class JoinMultiple(cfn_funcs.Join):
                               'should be: %(example)s') % fmt_data)
 
         try:
-            delim = args.pop(0)
-            joinlist = args.pop(0)
+            self._delim = args.pop(0)
+            self._joinlist = args.pop(0)
         except IndexError:
             raise ValueError(_('Incorrect arguments to "%(fn_name)s" '
                                'should be: %(example)s') % fmt_data)
         # Optionally allow additional lists, which are appended
         for l in args:
             try:
-                joinlist += l
+                self._joinlist += l
             except (AttributeError, TypeError):
                 raise TypeError(_('Incorrect arguments to "%(fn_name)s" '
                                 'should be: %(example)s') % fmt_data)
-        super(JoinMultiple, self).__init__(stack, fn_name,
-                                           args=[delim, joinlist])
+
+    def result(self):
+        strings = function.resolve(self._joinlist)
+        if strings is None:
+            strings = []
+        if (isinstance(strings, six.string_types) or
+                not isinstance(strings, collections.Sequence)):
+            raise TypeError(_('"%s" must operate on a list') % self.fn_name)
+
+        delim = function.resolve(self._delim)
+        if not isinstance(delim, six.string_types):
+            raise TypeError(_('"%s" delimiter must be a string') %
+                            self.fn_name)
+
+        def ensure_string(s):
+            msg = _('Items to join must be string, map or list not %s'
+                    ) % (repr(s)[:200])
+            if s is None:
+                return ''
+            elif isinstance(s, six.string_types):
+                return s
+            elif isinstance(s, (collections.Mapping, collections.Sequence)):
+                try:
+                    return jsonutils.dumps(s, default=None)
+                except TypeError:
+                    msg = _('Items to join must be string, map or list. '
+                            '%s failed json serialization'
+                            ) % (repr(s)[:200])
+            else:
+                msg = _('Items to join must be string, map or list not %s'
+                        ) % (repr(s)[:200])
+            raise TypeError(msg)
+
+        return delim.join(ensure_string(s) for s in strings)
 
 
 class ResourceFacade(cfn_funcs.ResourceFacade):
-    '''
+    """A function for retrieving data in a parent provider template.
+
     A function for obtaining data from the facade resource from within the
     corresponding provider template.
 
@@ -360,7 +439,7 @@ class ResourceFacade(cfn_funcs.ResourceFacade):
 
     where the valid attribute types are "metadata", "deletion_policy" and
     "update_policy".
-    '''
+    """
 
     _RESOURCE_ATTRIBUTES = (
         METADATA, DELETION_POLICY, UPDATE_POLICY,
@@ -370,10 +449,10 @@ class ResourceFacade(cfn_funcs.ResourceFacade):
 
 
 class Removed(function.Function):
-    '''
-    This function existed in previous versions of HOT, but has been removed.
+    """This function existed in previous versions of HOT, but has been removed.
+
     Check the HOT guide for an equivalent native function.
-    '''
+    """
 
     def validate(self):
         exp = (_("The function %s is not supported in this version of HOT.") %
@@ -385,8 +464,7 @@ class Removed(function.Function):
 
 
 class Repeat(function.Function):
-    '''
-    A function for iterating over a list of items.
+    """A function for iterating over a list of items.
 
     Takes the form::
 
@@ -399,7 +477,7 @@ class Repeat(function.Function):
     The result is a new list of the same size as <list>, where each element
     is a copy of <body> with any occurrences of <var> replaced with the
     corresponding item of <list>.
-    '''
+    """
     def __init__(self, stack, fn_name, args):
         super(Repeat, self).__init__(stack, fn_name, args)
 
@@ -453,8 +531,7 @@ class Repeat(function.Function):
 
 
 class Digest(function.Function):
-    '''
-    A function for performing digest operations.
+    """A function for performing digest operations.
 
     Takes the form::
 
@@ -464,7 +541,7 @@ class Digest(function.Function):
 
     Valid algorithms are the ones provided by natively by hashlib (md5, sha1,
     sha224, sha256, sha384, and sha512) or any one provided by OpenSSL.
-    '''
+    """
 
     def validate_usage(self, args):
         if not (isinstance(args, list) and
@@ -499,9 +576,9 @@ class Digest(function.Function):
 
 
 class StrSplit(function.Function):
-    '''
-    A function for splitting delimited strings into a list
-    and optionally extracting a specific list member by index.
+    """A function for splitting delimited strings into a list.
+
+    Optionally extracting a specific list member by index.
 
     Takes the form::
 
@@ -516,7 +593,7 @@ class StrSplit(function.Function):
     If <index> is specified, the specified list item will be returned
     otherwise, the whole list is returned, similar to get_attr with
     path based attributes accessing lists.
-    '''
+    """
 
     def __init__(self, stack, fn_name, args):
         super(StrSplit, self).__init__(stack, fn_name, args)

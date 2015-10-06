@@ -143,6 +143,11 @@ class HeatTestCase(testscenarios.WithScenarios,
                                  generic_rsrc.SignalResource)
         resource._register_class('ResourceWithPropsType',
                                  generic_rsrc.ResourceWithProps)
+        resource._register_class('ResourceWithPropsRefPropOnDelete',
+                                 generic_rsrc.ResourceWithPropsRefPropOnDelete)
+        resource._register_class(
+            'ResourceWithPropsRefPropOnValidate',
+            generic_rsrc.ResourceWithPropsRefPropOnValidate)
         resource._register_class('StackUserResourceType',
                                  generic_rsrc.StackUserResource)
         resource._register_class('ResourceWithResourceIDType',
@@ -151,6 +156,9 @@ class HeatTestCase(testscenarios.WithScenarios,
                                  generic_rsrc.ResourceWithAttributeType)
         resource._register_class('ResourceWithRequiredProps',
                                  generic_rsrc.ResourceWithRequiredProps)
+        resource._register_class(
+            'ResourceWithMultipleRequiredProps',
+            generic_rsrc.ResourceWithMultipleRequiredProps)
         resource._register_class(
             'ResourceWithRequiredPropsAndEmptyAttrs',
             generic_rsrc.ResourceWithRequiredPropsAndEmptyAttrs)

@@ -115,7 +115,7 @@ class StackResource(resource.Resource):
                     self.resource_id)
                 self.rpc_client().stack_cancel_update(
                     self.context,
-                    stack_identity,
+                    dict(stack_identity),
                     cancel_with_rollback=False)
 
     def has_nested(self):
@@ -248,9 +248,8 @@ class StackResource(resource.Resource):
     def _validate_nested_resources(self, templ):
         if cfg.CONF.max_resources_per_stack == -1:
             return
-        root_stack_id = self.stack.root_stack_id()
         total_resources = (len(templ[templ.RESOURCES]) +
-                           self.stack.total_resources(root_stack_id))
+                           self.stack.total_resources(self.root_stack_id))
 
         if self.nested():
             # It's an update and these resources will be deleted
@@ -391,19 +390,15 @@ class StackResource(resource.Resource):
             # if the create failed for some reason and the nested
             # stack was not created, we need to create an empty stack
             # here so that the update will work.
-            def _check_for_completion(creator_fn):
-                while not self.check_create_complete(creator_fn):
+            def _check_for_completion():
+                while not self.check_create_complete():
                     yield
 
             empty_temp = template_format.parse(
                 "heat_template_version: '2013-05-23'")
-            stack_creator = self.create_with_template(empty_temp, {})
-            checker = scheduler.TaskRunner(_check_for_completion,
-                                           stack_creator)
+            self.create_with_template(empty_temp, {})
+            checker = scheduler.TaskRunner(_check_for_completion)
             checker(timeout=self.stack.timeout_secs())
-
-            if stack_creator is not None:
-                stack_creator.run_to_completion()
             nested_stack = self.nested()
 
         if timeout_mins is None:
@@ -428,7 +423,7 @@ class StackResource(resource.Resource):
         try:
             self.rpc_client().update_stack(
                 self.context,
-                nested_stack.identifier(),
+                dict(nested_stack.identifier()),
                 parsed_template.t,
                 child_env.user_env_as_dict(),
                 parsed_template.files,
@@ -450,7 +445,7 @@ class StackResource(resource.Resource):
         if stack is None:
             return
 
-        stack_identity = stack.identifier()
+        stack_identity = dict(stack.identifier())
 
         try:
             self.rpc_client().delete_stack(self.context, stack_identity)
@@ -473,7 +468,7 @@ class StackResource(resource.Resource):
             self.context.tenant_id,
             self.physical_resource_name(),
             self.resource_id)
-        self.rpc_client().stack_suspend(self.context, stack_identity)
+        self.rpc_client().stack_suspend(self.context, dict(stack_identity))
 
     def check_suspend_complete(self, cookie=None):
         return self._check_status_complete(resource.Resource.SUSPEND)
@@ -487,7 +482,7 @@ class StackResource(resource.Resource):
             self.context.tenant_id,
             self.physical_resource_name(),
             self.resource_id)
-        self.rpc_client().stack_resume(self.context, stack_identity)
+        self.rpc_client().stack_resume(self.context, dict(stack_identity))
 
     def check_resume_complete(self, cookie=None):
         return self._check_status_complete(resource.Resource.RESUME)
@@ -502,7 +497,7 @@ class StackResource(resource.Resource):
             self.context.tenant_id,
             self.physical_resource_name(),
             self.resource_id)
-        self.rpc_client().stack_check(self.context, stack_identity)
+        self.rpc_client().stack_check(self.context, dict(stack_identity))
 
     def check_check_complete(self, cookie=None):
         return self._check_status_complete(resource.Resource.CHECK)
