@@ -41,8 +41,6 @@ six>=1.9.0
 SQLAlchemy<1.1.0,>=0.9.9
 sqlalchemy-migrate>=0.9.6
 stevedore>=1.5.0 # Apache-2.0
-WebOb<1.5.0,>=1.2.3
-
 -e git+https://github.com/openstack/oslo.cache.git#egg=oslo.cache
 -e git+https://github.com/openstack/oslo.config.git#egg=oslo.config
 -e git+https://github.com/openstack/oslo.concurrency.git#egg=oslo.concurrency
@@ -58,3 +56,4 @@ WebOb<1.5.0,>=1.2.3
 -e git+https://github.com/openstack/oslo.service.git#egg=oslo.service
 -e git+https://github.com/openstack/oslo.utils.git#egg=oslo.utils
 -e git+https://github.com/openstack/oslo.versionedobjects.git#egg=oslo.versionedobjects
+WebOb>=1.2.3
