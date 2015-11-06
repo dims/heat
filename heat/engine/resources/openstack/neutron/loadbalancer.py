@@ -27,6 +27,8 @@ from heat.engine import support
 class HealthMonitor(neutron.NeutronResource):
     """A resource for managing health monitors for loadbalancers in Neutron."""
 
+    required_service_extension = 'lbaas'
+
     PROPERTIES = (
         DELAY, TYPE, MAX_RETRIES, TIMEOUT, ADMIN_STATE_UP,
         HTTP_METHOD, EXPECTED_CODES, URL_PATH,
@@ -172,6 +174,8 @@ class HealthMonitor(neutron.NeutronResource):
 
 class Pool(neutron.NeutronResource):
     """A resource for managing load balancer pools in Neutron."""
+
+    required_service_extension = 'lbaas'
 
     PROPERTIES = (
         PROTOCOL, SUBNET_ID, SUBNET, LB_METHOD, NAME, DESCRIPTION,
@@ -549,6 +553,8 @@ class Pool(neutron.NeutronResource):
 class PoolMember(neutron.NeutronResource):
     """A resource to handle loadbalancer members."""
 
+    required_service_extension = 'lbaas'
+
     support_status = support.SupportStatus(version='2014.1')
 
     PROPERTIES = (
@@ -672,6 +678,8 @@ class PoolMember(neutron.NeutronResource):
 class LoadBalancer(resource.Resource):
     """A resource to link a neutron pool with servers."""
 
+    required_service_extension = 'lbaas'
+
     PROPERTIES = (
         POOL_ID, PROTOCOL_PORT, MEMBERS,
     ) = (
@@ -732,10 +740,8 @@ class LoadBalancer(resource.Resource):
             old_members = set(six.iterkeys(rd_members))
             for member in old_members - members:
                 member_id = rd_members[member]
-                try:
+                with self.client_plugin().ignore_not_found:
                     self.client().delete_member(member_id)
-                except Exception as ex:
-                    self.client_plugin().ignore_not_found(ex)
                 self.data_delete(member)
             pool = self.properties[self.POOL_ID]
             protocol_port = self.properties[self.PROTOCOL_PORT]
@@ -753,10 +759,8 @@ class LoadBalancer(resource.Resource):
         # FIXME(pshchelo): this deletes members in a tight loop,
         # so is prone to OverLimit bug similar to LP 1265937
         for member, member_id in self.data().items():
-            try:
+            with self.client_plugin().ignore_not_found:
                 self.client().delete_member(member_id)
-            except Exception as ex:
-                self.client_plugin().ignore_not_found(ex)
             self.data_delete(member)
 
 

@@ -62,7 +62,7 @@ class StackConvergenceCreateUpdateDeleteTest(common.HeatTestCase):
 
         self.assertIsNone(stack_db.prev_raw_template_id)
 
-        self.assertEqual(stack_db.convergence, True)
+        self.assertTrue(stack_db.convergence)
         self.assertEqual({'edges': [[[1, True], None]]}, stack_db.current_deps)
         leaves = stack.convergence_dependencies.leaves()
         expected_calls = []
@@ -92,7 +92,7 @@ class StackConvergenceCreateUpdateDeleteTest(common.HeatTestCase):
         self.assertIsNotNone(stack_db.current_traversal)
         self.assertIsNotNone(stack_db.raw_template_id)
         self.assertIsNone(stack_db.prev_raw_template_id)
-        self.assertEqual(stack_db.convergence, True)
+        self.assertTrue(stack_db.convergence)
         self.assertEqual(sorted([[[3, True], [5, True]],    # C, A
                                  [[3, True], [4, True]],    # C, B
                                  [[1, True], [3, True]],    # E, C
@@ -195,7 +195,7 @@ class StackConvergenceCreateUpdateDeleteTest(common.HeatTestCase):
         self.assertIsNotNone(stack_db.raw_template_id)
         self.assertIsNotNone(stack_db.current_traversal)
         self.assertIsNotNone(stack_db.prev_raw_template_id)
-        self.assertEqual(True, stack_db.convergence)
+        self.assertTrue(stack_db.convergence)
         self.assertEqual(sorted([[[7, True], [8, True]],
                                  [[8, True], [5, True]],
                                  [[8, True], [4, True]],
@@ -442,6 +442,20 @@ class StackConvergenceCreateUpdateDeleteTest(common.HeatTestCase):
         best_res = stack._get_best_existing_rsrc_db('A')
         # should return resource with template id 2 which is prev template
         self.assertEqual(a_res_2.id, best_res.id)
+
+    def test_updated_time(self, mock_cr):
+        stack = parser.Stack(utils.dummy_context(), 'convg_updated_time_test',
+                             templatem.Template.create_empty_template())
+        stack.store()
+        stack.create()
+        self.assertIsNone(stack.updated_time)
+
+        tmpl = {'HeatTemplateFormatVersion': '2012-12-12',
+                'Resources': {'R1': {'Type': 'GenericResourceType'}}}
+        newstack = parser.Stack(utils.dummy_context(), 'updated_time_test',
+                                templatem.Template(tmpl))
+        stack.update(newstack)
+        self.assertIsNotNone(stack.updated_time)
 
 
 class TestConvgStackRollback(common.HeatTestCase):

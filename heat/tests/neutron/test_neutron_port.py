@@ -294,6 +294,42 @@ class NeutronPortTest(common.HeatTestCase):
         scheduler.TaskRunner(port.create)()
         self.m.VerifyAll()
 
+    def test_ip_address_is_cidr(self):
+        neutronV20.find_resourceid_by_name_or_id(
+            mox.IsA(neutronclient.Client),
+            'network',
+            'abcd1234'
+        ).MultipleTimes().AndReturn('abcd1234')
+        neutronclient.Client.create_port({'port': {
+            'network_id': u'abcd1234',
+            'allowed_address_pairs': [{
+                'ip_address': u'10.0.3.0/24',
+                'mac_address': u'00-B0-D0-86-BB-F7'
+            }],
+            'name': utils.PhysName('test_stack', 'port'),
+            'admin_state_up': True}}
+        ).AndReturn({'port': {
+            "status": "BUILD",
+            "id": "2e00180a-ff9d-42c4-b701-a0606b243447"
+        }})
+        neutronclient.Client.show_port(
+            '2e00180a-ff9d-42c4-b701-a0606b243447'
+        ).AndReturn({'port': {
+            "status": "ACTIVE",
+            "id": "2e00180a-ff9d-42c4-b701-a0606b243447"
+        }})
+
+        self.m.ReplayAll()
+
+        t = template_format.parse(neutron_port_with_address_pair_template)
+        t['resources']['port']['properties'][
+            'allowed_address_pairs'][0]['ip_address'] = '10.0.3.0/24'
+        stack = utils.parse_stack(t)
+
+        port = stack['port']
+        scheduler.TaskRunner(port.create)()
+        self.m.VerifyAll()
+
     def _mock_create_with_security_groups(self, port_prop):
         neutronV20.find_resourceid_by_name_or_id(
             mox.IsA(neutronclient.Client),
@@ -559,7 +595,7 @@ class NeutronPortTest(common.HeatTestCase):
         scheduler.TaskRunner(port.create)()
         self.assertEqual('DOWN', port.FnGetAtt('status'))
         self.assertEqual([], port.FnGetAtt('allowed_address_pairs'))
-        self.assertEqual(True, port.FnGetAtt('admin_state_up'))
+        self.assertTrue(port.FnGetAtt('admin_state_up'))
         self.assertEqual('net1234', port.FnGetAtt('network_id'))
         self.assertEqual('fa:16:3e:75:67:60', port.FnGetAtt('mac_address'))
         self.assertEqual(utils.PhysName('test_stack', 'port'),
@@ -720,6 +756,26 @@ class NeutronPortTest(common.HeatTestCase):
 
         self.m.VerifyAll()
 
+    def test_prepare_for_replace_port_not_created(self):
+        t = template_format.parse(neutron_port_template)
+        stack = utils.parse_stack(t)
+        port = stack['port']
+        port._show_resource = mock.Mock()
+        port.data_set = mock.Mock()
+        n_client = mock.Mock()
+        port.client = mock.Mock(return_value=n_client)
+
+        self.assertIsNone(port.resource_id)
+
+        # execute prepare_for_replace
+        port.prepare_for_replace()
+
+        # check, if the port is not created, do nothing in
+        # prepare_for_replace()
+        self.assertFalse(port._show_resource.called)
+        self.assertFalse(port.data_set.called)
+        self.assertFalse(n_client.update_port.called)
+
     def test_prepare_for_replace_port(self):
         t = template_format.parse(neutron_port_template)
         stack = utils.parse_stack(t)
@@ -768,7 +824,7 @@ class NeutronPortTest(common.HeatTestCase):
         n_client = mock.Mock()
         new_port.client = mock.Mock(return_value=n_client)
 
-        # execute prepare_for_replace
+        # execute restore_prev_rsrc
         new_port.restore_prev_rsrc()
 
         # check, that ports were updated: old port get ip and
@@ -807,7 +863,7 @@ class NeutronPortTest(common.HeatTestCase):
         n_client = mock.Mock()
         prev_rsrc.client = mock.Mock(return_value=n_client)
 
-        # execute prepare_for_replace
+        # execute restore_prev_rsrc
         prev_rsrc.restore_prev_rsrc(convergence=True)
 
         expected_existing_props = {'port': {'fixed_ips': []}}

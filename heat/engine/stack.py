@@ -402,7 +402,12 @@ class Stack(collections.Mapping):
             not_tags,
             not_tags_any) or []
         for stack in stacks:
-            yield cls._from_db(context, stack, resolve_data=resolve_data)
+            try:
+                yield cls._from_db(context, stack, resolve_data=resolve_data)
+            except exception.NotFound:
+                # We're in a different transaction than the get_all, so a stack
+                # returned above can be deleted by the time we try to load it.
+                pass
 
     @classmethod
     def _from_db(cls, context, stack, resolve_data=True,
@@ -980,7 +985,7 @@ class Stack(collections.Mapping):
 
     @profiler.trace('Stack.converge_stack', hide_args=False)
     def converge_stack(self, template, action=UPDATE, new_stack=None):
-        """Updates the stack and triggers convergence for resources."""
+        """Update the stack and triggers convergence for resources."""
         if action not in [self.CREATE, self.ADOPT]:
             # no back-up template for create action
             self.prev_raw_template_id = getattr(self.t, 'id', None)
@@ -992,7 +997,10 @@ class Stack(collections.Mapping):
 
         previous_traversal = self.current_traversal
         self.current_traversal = uuidutils.generate_uuid()
-        self.updated_time = datetime.datetime.utcnow()
+
+        if action is not self.CREATE:
+            self.updated_time = datetime.datetime.utcnow()
+
         if new_stack is not None:
             self.disable_rollback = new_stack.disable_rollback
             self.timeout_mins = new_stack.timeout_mins

@@ -20,6 +20,7 @@ import six
 from heat.common import exception
 from heat.common import template_format
 from heat.engine.cfn import functions as cfn_funcs
+from heat.engine.clients.os import neutron
 from heat.engine.resources.openstack.neutron import subnet
 from heat.engine import rsrc_defn
 from heat.engine import scheduler
@@ -103,6 +104,8 @@ class NeutronSubnetTest(common.HeatTestCase):
         self.m.StubOutWithMock(neutronclient.Client, 'show_subnet')
         self.m.StubOutWithMock(neutronclient.Client, 'update_subnet')
         self.m.StubOutWithMock(neutronV20, 'find_resourceid_by_name_or_id')
+        self.patchobject(neutron.NeutronClientPlugin, 'has_extension',
+                         return_value=True)
 
     def create_subnet(self, t, stack, resource_name):
         resource_defns = stack.t.resource_definitions(stack)
@@ -111,7 +114,17 @@ class NeutronSubnetTest(common.HeatTestCase):
         return rsrc
 
     def test_subnet(self):
-        t = self._test_subnet()
+        update_props = {'subnet': {
+            'dns_nameservers': ['8.8.8.8', '192.168.1.254'],
+            'name': 'mysubnet',
+            'enable_dhcp': True,
+            'host_routes': [{'destination': '192.168.1.0/24',
+                             'nexthop': '194.168.1.2'}],
+            "allocation_pools": [
+                {"start": "10.0.3.20", "end": "10.0.3.100"},
+                {"start": "10.0.3.110", "end": "10.0.3.200"}]}}
+
+        t = self._test_subnet(u_props=update_props)
         neutronV20.find_resourceid_by_name_or_id(
             mox.IsA(neutronclient.Client),
             'network',
@@ -147,7 +160,8 @@ class NeutronSubnetTest(common.HeatTestCase):
             "ip_version": 4,
             "cidr": "10.0.3.0/24",
             "allocation_pools": [
-                {"start": "10.0.3.20", "end": "10.0.3.150"}],
+                {"start": "10.0.3.20", "end": "10.0.3.100"},
+                {"start": "10.0.3.110", "end": "10.0.3.200"}],
             "dns_nameservers": ["8.8.8.8", "192.168.1.254"],
             "host_routes": [
                 {"destination": "192.168.1.0/24", "nexthop": "194.168.1.2"}
@@ -199,7 +213,15 @@ class NeutronSubnetTest(common.HeatTestCase):
         self.assertIsNone(scheduler.TaskRunner(rsrc.delete)())
         self.m.VerifyAll()
 
-    def _test_subnet(self, resolve_neutron=True):
+    def _test_subnet(self, resolve_neutron=True, u_props=None):
+        default_update_props = {'subnet': {
+            'dns_nameservers': ['8.8.8.8', '192.168.1.254'],
+            'name': 'mysubnet',
+            'enable_dhcp': True,
+            'host_routes': [{'destination': '192.168.1.0/24',
+                             'nexthop': '194.168.1.2'}]}}
+        update_props = u_props if u_props else default_update_props
+
         neutronclient.Client.create_subnet({
             'subnet': {
                 'name': utils.PhysName('test_stack', 'test_subnet'),
@@ -275,17 +297,7 @@ class NeutronSubnetTest(common.HeatTestCase):
             t = template_format.parse(neutron_template)
             # Update script
             neutronclient.Client.update_subnet(
-                '91e47a57-7508-46fe-afc9-fc454e8580e1',
-                {'subnet': {
-                 'dns_nameservers': ['8.8.8.8', '192.168.1.254'],
-                 'name': 'mysubnet',
-                 'enable_dhcp': True,
-                 'host_routes': [
-                     {'destination': '192.168.1.0/24',
-                      'nexthop': '194.168.1.2'}
-                 ]
-                 }}
-            )
+                '91e47a57-7508-46fe-afc9-fc454e8580e1', update_props)
 
         else:
             t = template_format.parse(neutron_template_deprecated)
@@ -469,6 +481,21 @@ class NeutronSubnetTest(common.HeatTestCase):
         self.assertEqual((rsrc.CREATE, rsrc.COMPLETE), rsrc.state)
         rsrc.validate()
         self.m.VerifyAll()
+
+    def test_host_routes_validate_destination(self):
+        t = template_format.parse(neutron_template)
+        props = t['resources']['sub_net']['properties']
+        props['host_routes'] = [{'destination': 'invalid_cidr',
+                                 'nexthop': '10.0.3.20'}]
+        stack = utils.parse_stack(t)
+        rsrc = stack['sub_net']
+        ex = self.assertRaises(exception.StackValidationFailed,
+                               rsrc.validate)
+        msg = ("Property error: "
+               "resources.sub_net.properties.host_routes[0].destination: "
+               "Error validating value 'invalid_cidr': Invalid net cidr "
+               "invalid IPNetwork invalid_cidr ")
+        self.assertEqual(msg, six.text_type(ex))
 
     def test_ipv6_validate_ra_mode(self):
         t = template_format.parse(neutron_template)

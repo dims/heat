@@ -24,9 +24,12 @@ from heat.engine import support
 
 class ExtraRoute(neutron.NeutronResource):
 
+    required_service_extension = 'extraroute'
+
     support_status = support.SupportStatus(
         status=support.UNSUPPORTED,
-        message=_('This resource is not supported, use at your own risk.'))
+        message=_('The resource OS::Neutron::ExtraRoute is not supported, '
+                  'use at your own risk.'))
 
     PROPERTIES = (
         ROUTER_ID, DESTINATION, NEXTHOP,
@@ -94,7 +97,7 @@ class ExtraRoute(neutron.NeutronResource):
         if not self.resource_id:
             return
         (router_id, destination, nexthop) = self.resource_id.split(':')
-        try:
+        with self.client_plugin().ignore_not_found:
             routes = self.client().show_router(
                 router_id).get('router').get('routes', [])
             try:
@@ -104,8 +107,6 @@ class ExtraRoute(neutron.NeutronResource):
                 return
             self.client().update_router(router_id,
                                         {'router': {'routes': routes}})
-        except Exception as ex:
-            self.client_plugin().ignore_not_found(ex)
 
 
 def resource_mapping():

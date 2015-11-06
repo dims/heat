@@ -21,6 +21,7 @@ import yaml
 from heat.common import config
 from heat.common import exception
 from heat.common import template_format
+from heat.engine.clients.os import neutron
 from heat.tests import common
 from heat.tests import utils
 
@@ -56,7 +57,7 @@ class JsonToYamlTest(common.HeatTestCase):
 
         self.assertEqual(u'2012-12-12', yml[u'HeatTemplateFormatVersion'],
                          file_name)
-        self.assertFalse(u'AWSTemplateFormatVersion' in yml, file_name)
+        self.assertNotIn(u'AWSTemplateFormatVersion', yml, file_name)
         del(yml[u'HeatTemplateFormatVersion'])
 
         jsn = template_format.parse(json_str)
@@ -85,7 +86,7 @@ class JsonToYamlTest(common.HeatTestCase):
             match = re.search('[\s,{]\d+\s*:', yml_str)
             # Check that there are no matches of integer-only keys
             # lacking explicit quotes
-            self.assertEqual(match, None)
+            self.assertIsNone(match)
 
 
 class YamlMinimalTest(common.HeatTestCase):
@@ -205,6 +206,8 @@ class JsonYamlResolvedCompareTest(common.HeatTestCase):
             self.assertEqual(stack1[key].t, stack2[key].t)
 
     def test_neutron_resolved(self):
+        self.patchobject(neutron.NeutronClientPlugin, 'has_extension',
+                         return_value=True)
         self.compare_stacks('Neutron.template', 'Neutron.yaml', {})
 
     def test_wordpress_resolved(self):

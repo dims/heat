@@ -58,13 +58,13 @@ LOG = logging.getLogger(__name__)
 URL_LENGTH_LIMIT = 50000
 
 api_opts = [
-    cfg.StrOpt('bind_host', default='0.0.0.0',
-               help=_('Address to bind the server. Useful when '
-                      'selecting a particular network interface.'),
-               deprecated_group='DEFAULT'),
-    cfg.IntOpt('bind_port', default=8004, min=1, max=65535,
-               help=_('The port on which the server will listen.'),
-               deprecated_group='DEFAULT'),
+    cfg.IPOpt('bind_host', default='0.0.0.0',
+              help=_('Address to bind the server. Useful when '
+                     'selecting a particular network interface.'),
+              deprecated_group='DEFAULT'),
+    cfg.PortOpt('bind_port', default=8004,
+                help=_('The port on which the server will listen.'),
+                deprecated_group='DEFAULT'),
     cfg.IntOpt('backlog', default=4096,
                help=_("Number of backlog requests "
                       "to configure the socket with."),
@@ -96,13 +96,13 @@ cfg.CONF.register_opts(api_opts,
                        group=api_group)
 
 api_cfn_opts = [
-    cfg.StrOpt('bind_host', default='0.0.0.0',
-               help=_('Address to bind the server. Useful when '
-                      'selecting a particular network interface.'),
-               deprecated_group='DEFAULT'),
-    cfg.IntOpt('bind_port', default=8000, min=1, max=65535,
-               help=_('The port on which the server will listen.'),
-               deprecated_group='DEFAULT'),
+    cfg.IPOpt('bind_host', default='0.0.0.0',
+              help=_('Address to bind the server. Useful when '
+                     'selecting a particular network interface.'),
+              deprecated_group='DEFAULT'),
+    cfg.PortOpt('bind_port', default=8000,
+                help=_('The port on which the server will listen.'),
+                deprecated_group='DEFAULT'),
     cfg.IntOpt('backlog', default=4096,
                help=_("Number of backlog requests "
                       "to configure the socket with."),
@@ -134,13 +134,13 @@ cfg.CONF.register_opts(api_cfn_opts,
                        group=api_cfn_group)
 
 api_cw_opts = [
-    cfg.StrOpt('bind_host', default='0.0.0.0',
-               help=_('Address to bind the server. Useful when '
-                      'selecting a particular network interface.'),
-               deprecated_group='DEFAULT'),
-    cfg.IntOpt('bind_port', default=8003, min=1, max=65535,
-               help=_('The port on which the server will listen.'),
-               deprecated_group='DEFAULT'),
+    cfg.IPOpt('bind_host', default='0.0.0.0',
+              help=_('Address to bind the server. Useful when '
+                     'selecting a particular network interface.'),
+              deprecated_group='DEFAULT'),
+    cfg.PortOpt('bind_port', default=8003,
+                help=_('The port on which the server will listen.'),
+                deprecated_group='DEFAULT'),
     cfg.IntOpt('backlog', default=4096,
                help=_("Number of backlog requests "
                       "to configure the socket with."),

@@ -199,6 +199,14 @@ class StackResourceTest(StackResourceBaseTest):
         ret = self.parent_resource.prepare_abandon()
         self.assertEqual({}, ret)
 
+    def test_abandon_nested_not_deleted(self):
+        delete_nested = self.patchobject(self.parent_resource, 'delete_nested')
+
+        self.parent_stack.prepare_abandon()
+        self.parent_stack.delete(abandon=True)
+
+        self.assertEqual(0, delete_nested.call_count)
+
     @testtools.skipIf(six.PY3, "needs a separate change")
     def test_implementation_signature(self):
         self.parent_resource.child_template = mock.Mock(
@@ -535,7 +543,7 @@ class StackResourceTest(StackResourceBaseTest):
             self.parent_resource.properties,
             self.parent_resource)
 
-        self.assertEqual(True, need_update)
+        self.assertTrue(need_update)
 
     def test_need_update_in_failed_state_for_nested_resource(self):
         """Test the resource with no nested stack should need replacement.

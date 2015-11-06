@@ -330,12 +330,31 @@ class HeatIntegrationTest(testscenarios.WithScenarios,
 
     def _stack_delete(self, stack_identifier):
         try:
-            self.client.stacks.delete(stack_identifier)
+            self._handle_in_progress(self.client.stacks.delete,
+                                     stack_identifier)
         except heat_exceptions.HTTPNotFound:
             pass
         self._wait_for_stack_status(
             stack_identifier, 'DELETE_COMPLETE',
             success_on_not_found=True)
+
+    def _handle_in_progress(self, fn, *args, **kwargs):
+        build_timeout = self.conf.build_timeout
+        build_interval = self.conf.build_interval
+        start = timeutils.utcnow()
+        while timeutils.delta_seconds(start,
+                                      timeutils.utcnow()) < build_timeout:
+            try:
+                fn(*args, **kwargs)
+            except heat_exceptions.HTTPConflict as ex:
+                # FIXME(sirushtim): Wait a little for the stack lock to be
+                # released and hopefully, the stack should be usable again.
+                if ex.error['error']['type'] != 'ActionInProgress':
+                    raise ex
+
+                time.sleep(build_interval)
+            else:
+                break
 
     def update_stack(self, stack_identifier, template=None, environment=None,
                      files=None, parameters=None, tags=None,
@@ -347,34 +366,20 @@ class HeatIntegrationTest(testscenarios.WithScenarios,
         parameters = parameters or {}
         stack_name = stack_identifier.split('/')[0]
 
-        build_timeout = self.conf.build_timeout
-        build_interval = self.conf.build_interval
-        start = timeutils.utcnow()
         self.updated_time[stack_identifier] = self.client.stacks.get(
             stack_identifier).updated_time
-        while timeutils.delta_seconds(start,
-                                      timeutils.utcnow()) < build_timeout:
-            try:
-                self.client.stacks.update(
-                    stack_id=stack_identifier,
-                    stack_name=stack_name,
-                    template=template,
-                    files=env_files,
-                    disable_rollback=disable_rollback,
-                    parameters=parameters,
-                    environment=env,
-                    tags=tags,
-                    existing=existing
-                )
-            except heat_exceptions.HTTPConflict as ex:
-                # FIXME(sirushtim): Wait a little for the stack lock to be
-                # released and hopefully, the stack should be updatable again.
-                if ex.error['error']['type'] != 'ActionInProgress':
-                    raise ex
 
-                time.sleep(build_interval)
-            else:
-                break
+        self._handle_in_progress(
+            self.client.stacks.update,
+            stack_id=stack_identifier,
+            stack_name=stack_name,
+            template=template,
+            files=env_files,
+            disable_rollback=disable_rollback,
+            parameters=parameters,
+            environment=env,
+            tags=tags,
+            existing=existing)
 
         kwargs = {'stack_identifier': stack_identifier,
                   'status': expected_status}
@@ -439,6 +444,27 @@ class HeatIntegrationTest(testscenarios.WithScenarios,
         parent_id = stack_identifier.split("/")[-1]
         self.assertEqual(parent_id, nested_stack.parent)
         return nested_identifier
+
+    def group_nested_identifier(self, stack_identifier,
+                                group_name):
+        # Get the nested stack identifier from a group resource
+        rsrc = self.client.resources.get(stack_identifier, group_name)
+        physical_resource_id = rsrc.physical_resource_id
+
+        nested_stack = self.client.stacks.get(physical_resource_id)
+        nested_identifier = '%s/%s' % (nested_stack.stack_name,
+                                       nested_stack.id)
+        parent_id = stack_identifier.split("/")[-1]
+        self.assertEqual(parent_id, nested_stack.parent)
+        return nested_identifier
+
+    def list_group_resources(self, stack_identifier,
+                             group_name, minimal=True):
+        nested_identifier = self.group_nested_identifier(stack_identifier,
+                                                         group_name)
+        if minimal:
+            return self.list_resources(nested_identifier)
+        return self.client.resources.list(nested_identifier)
 
     def list_resources(self, stack_identifier):
         resources = self.client.resources.list(stack_identifier)
@@ -516,7 +542,7 @@ class HeatIntegrationTest(testscenarios.WithScenarios,
             self.addCleanup(self._stack_delete, stack_identifier)
             self.skipTest('Testing Stack suspend disabled in conf, skipping')
         stack_name = stack_identifier.split('/')[0]
-        self.client.actions.suspend(stack_name)
+        self._handle_in_progress(self.client.actions.suspend, stack_name)
         # improve debugging by first checking the resource's state.
         self._wait_for_all_resource_status(stack_identifier,
                                            'SUSPEND_COMPLETE')
@@ -528,7 +554,7 @@ class HeatIntegrationTest(testscenarios.WithScenarios,
             self.addCleanup(self._stack_delete, stack_identifier)
             self.skipTest('Testing Stack resume disabled in conf, skipping')
         stack_name = stack_identifier.split('/')[0]
-        self.client.actions.resume(stack_name)
+        self._handle_in_progress(self.client.actions.resume, stack_name)
         # improve debugging by first checking the resource's state.
         self._wait_for_all_resource_status(stack_identifier,
                                            'RESUME_COMPLETE')
