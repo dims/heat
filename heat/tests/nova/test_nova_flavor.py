@@ -13,6 +13,7 @@
 
 import mock
 
+from heat.engine.clients.os import nova as novac
 from heat.engine.resources.openstack.nova import nova_flavor
 from heat.engine import stack
 from heat.engine import template
@@ -41,7 +42,8 @@ flavor_template = {
 class NovaFlavorTest(common.HeatTestCase):
     def setUp(self):
         super(NovaFlavorTest, self).setUp()
-
+        self.patchobject(novac.NovaClientPlugin, 'has_extension',
+                         return_value=True)
         self.ctx = utils.dummy_context()
 
         self.stack = stack.Stack(
@@ -66,10 +68,25 @@ class NovaFlavorTest(common.HeatTestCase):
         value = mock.MagicMock()
         flavor_id = '927202df-1afb-497f-8368-9c2d2f26e5db'
         value.id = flavor_id
+        value.is_public = True
         self.flavors.create.return_value = value
+        self.flavors.get.return_value = value
         self.my_flavor.handle_create()
         value.set_keys.assert_called_once_with({"foo": "bar"})
         self.assertEqual(flavor_id, self.my_flavor.resource_id)
+        self.assertTrue(self.my_flavor.FnGetAtt('is_public'))
+
+    def test_private_flavor_handle_create(self):
+        value = mock.MagicMock()
+        flavor_id = '927202df-1afb-497f-8368-9c2d2f26e5db'
+        value.id = flavor_id
+        value.is_public = False
+        self.flavors.create.return_value = value
+        self.flavors.get.return_value = value
+        self.my_flavor.handle_create()
+        value.set_keys.assert_called_once_with({"foo": "bar"})
+        self.assertEqual(flavor_id, self.my_flavor.resource_id)
+        self.assertFalse(self.my_flavor.FnGetAtt('is_public'))
 
     def test_flavor_handle_update_keys(self):
         value = mock.MagicMock()

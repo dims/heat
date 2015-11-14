@@ -1354,8 +1354,8 @@ class ResourceTest(common.HeatTestCase):
     def _test_skip_validation_if_custom_constraint(self, tmpl):
         stack = parser.Stack(utils.dummy_context(), 'test', tmpl)
         stack.store()
-        path = ('heat.engine.clients.os.neutron.NetworkConstraint.'
-                'validate_with_client')
+        path = ('heat.engine.clients.os.neutron.neutron_constraints.'
+                'NetworkConstraint.validate_with_client')
         with mock.patch(path) as mock_validate:
             mock_validate.side_effect = neutron_exp.NeutronClientException
             rsrc2 = stack['bar']
@@ -2954,6 +2954,108 @@ class ResourceAvailabilityTest(common.HeatTestCase):
             service_name=(generic_rsrc.ResourceWithDefaultClientName
                           .default_client_name)
         )
+
+    @mock.patch.object(clients.OpenStackClients, 'client_plugin')
+    def test_service_deployed_required_extension_true(
+            self,
+            mock_client_plugin_method):
+        """Test availability of resource with a required extension. """
+
+        mock_service_types, mock_client_plugin = self._mock_client_plugin(
+            ['test_type']
+        )
+        mock_client_plugin.has_extension = mock.Mock(
+            return_value=True)
+        mock_client_plugin_method.return_value = mock_client_plugin
+
+        self.assertTrue(
+            generic_rsrc.ResourceWithDefaultClientNameExt.is_service_available(
+                context=mock.Mock()))
+        mock_client_plugin_method.assert_called_once_with(
+            generic_rsrc.ResourceWithDefaultClientName.default_client_name)
+        mock_service_types.assert_called_once_with()
+        mock_client_plugin.does_endpoint_exist.assert_called_once_with(
+            service_type='test_type',
+            service_name=(generic_rsrc.ResourceWithDefaultClientName
+                          .default_client_name))
+        mock_client_plugin.has_extension.assert_called_once_with('foo')
+
+    @mock.patch.object(clients.OpenStackClients, 'client_plugin')
+    def test_service_deployed_required_extension_false(
+            self,
+            mock_client_plugin_method):
+        """Test availability of resource with a required extension. """
+
+        mock_service_types, mock_client_plugin = self._mock_client_plugin(
+            ['test_type']
+        )
+        mock_client_plugin.has_extension = mock.Mock(
+            return_value=False)
+        mock_client_plugin_method.return_value = mock_client_plugin
+
+        self.assertFalse(
+            generic_rsrc.ResourceWithDefaultClientNameExt.is_service_available(
+                context=mock.Mock()))
+        mock_client_plugin_method.assert_called_once_with(
+            generic_rsrc.ResourceWithDefaultClientName.default_client_name)
+        mock_service_types.assert_called_once_with()
+        mock_client_plugin.does_endpoint_exist.assert_called_once_with(
+            service_type='test_type',
+            service_name=(generic_rsrc.ResourceWithDefaultClientName
+                          .default_client_name))
+        mock_client_plugin.has_extension.assert_called_once_with('foo')
+
+    @mock.patch.object(clients.OpenStackClients, 'client_plugin')
+    def test_service_deployed_required_extension_exception(
+            self,
+            mock_client_plugin_method):
+        """Test availability of resource with a required extension. """
+
+        mock_service_types, mock_client_plugin = self._mock_client_plugin(
+            ['test_type']
+        )
+        mock_client_plugin.has_extension = mock.Mock(
+            side_effect=Exception("error"))
+        mock_client_plugin_method.return_value = mock_client_plugin
+
+        self.assertFalse(
+            generic_rsrc.ResourceWithDefaultClientNameExt.is_service_available(
+                context=mock.Mock()))
+        mock_client_plugin_method.assert_called_once_with(
+            generic_rsrc.ResourceWithDefaultClientName.default_client_name)
+        mock_service_types.assert_called_once_with()
+        mock_client_plugin.does_endpoint_exist.assert_called_once_with(
+            service_type='test_type',
+            service_name=(generic_rsrc.ResourceWithDefaultClientName
+                          .default_client_name))
+        mock_client_plugin.has_extension.assert_called_once_with('foo')
+
+    @mock.patch.object(clients.OpenStackClients, 'client_plugin')
+    def test_service_not_deployed_required_extension(
+            self,
+            mock_client_plugin_method):
+        """Test availability of resource when the service is not deployed.
+
+        When the service is not deployed, resource is considered as
+        unavailable.
+        """
+
+        mock_service_types, mock_client_plugin = self._mock_client_plugin(
+            ['test_type_un_deployed'],
+            False
+        )
+        mock_client_plugin_method.return_value = mock_client_plugin
+
+        self.assertFalse(
+            generic_rsrc.ResourceWithDefaultClientNameExt.is_service_available(
+                context=mock.Mock()))
+        mock_client_plugin_method.assert_called_once_with(
+            generic_rsrc.ResourceWithDefaultClientName.default_client_name)
+        mock_service_types.assert_called_once_with()
+        mock_client_plugin.does_endpoint_exist.assert_called_once_with(
+            service_type='test_type_un_deployed',
+            service_name=(generic_rsrc.ResourceWithDefaultClientName
+                          .default_client_name))
 
     def test_service_not_deployed_throws_exception(self):
         """Test raising exception when the service is not deployed.
