@@ -33,6 +33,7 @@ from heat.common.i18n import _
 from heat.common.i18n import _LI
 from heat.common.i18n import _LW
 from heat.engine.clients import client_plugin
+from heat.engine.clients import os as os_client
 from heat.engine import constraints
 
 LOG = logging.getLogger(__name__)
@@ -111,9 +112,7 @@ class NovaClientPlugin(client_plugin.ClientPlugin):
         """
         try:
             return self.client().servers.get(server)
-        except exceptions.NotFound as ex:
-            LOG.warn(_LW('Server (%(server)s) not found: %(ex)s'),
-                     {'server': server, 'ex': ex})
+        except exceptions.NotFound:
             raise exception.EntityNotFound(entity='Server', name=server)
 
     def fetch_server(self, server_id):
@@ -245,6 +244,21 @@ class NovaClientPlugin(client_plugin.ClientPlugin):
         if flavor_id is None:
             raise exception.FlavorMissing(flavor_id=flavor)
         return flavor_id
+
+    def get_host(self, host_name):
+        """Get the host id specified by name.
+
+        :param host_name: the name of host to find
+        :returns: the list of match hosts
+        :raises: exception.EntityNotFound
+        """
+
+        host_list = self.client().hosts.list()
+        for host in host_list:
+            if host.host_name == host_name and host.service == self.COMPUTE:
+                return host
+
+        raise exception.EntityNotFound(entity='Host', name=host_name)
 
     def get_keypair(self, key_name):
         """Get the public key specified by :key_name:
@@ -573,7 +587,7 @@ echo -e '%s\tALL=(ALL)\tNOPASSWD: ALL' >> /etc/sudoers
         except exceptions.NotFound as ex:
             LOG.debug('Nova network (%(net)s) not found: %(ex)s',
                       {'net': label, 'ex': ex})
-            raise exception.NovaNetworkNotFound(network=label)
+            raise exception.EntityNotFound(entity='Nova network', name=label)
         except exceptions.NoUniqueMatch as exc:
             LOG.debug('Nova network (%(net)s) is not unique matched: %(exc)s',
                       {'net': label, 'exc': exc})
@@ -656,10 +670,14 @@ echo -e '%s\tALL=(ALL)\tNOPASSWD: ALL' >> /etc/sudoers
         else:
             return False
 
-    def has_extension(self, alias):
-        """Check if extension is present."""
+    @os_client.MEMOIZE
+    def _list_extensions(self):
         extensions = self.client().list_extensions.show_all()
-        return alias in [extension.alias for extension in extensions]
+        return set(extension.alias for extension in extensions)
+
+    def has_extension(self, alias):
+        """Check if specific extension is present."""
+        return alias in self._list_extensions()
 
 
 class ServerConstraint(constraints.BaseCustomConstraint):
@@ -692,8 +710,16 @@ class FlavorConstraint(constraints.BaseCustomConstraint):
 
 class NetworkConstraint(constraints.BaseCustomConstraint):
 
-    expected_exceptions = (exception.NovaNetworkNotFound,
+    expected_exceptions = (exception.EntityNotFound,
                            exception.PhysicalResourceNameAmbiguity)
 
     def validate_with_client(self, client, network):
         client.client_plugin('nova').get_nova_network_id(network)
+
+
+class HostConstraint(constraints.BaseCustomConstraint):
+
+    expected_exceptions = (exception.EntityNotFound,)
+
+    def validate_with_client(self, client, host_name):
+        client.client_plugin('nova').get_host(host_name)

@@ -331,6 +331,105 @@ resources:
         self.assertEqual(nested_resources,
                          self.list_resources(nested_identifier))
 
+    def test_stack_update_alias_type(self):
+        env = {'resource_registry':
+               {'My::TestResource': 'OS::Heat::RandomString',
+                'My::TestResource2': 'OS::Heat::RandomString'}}
+        stack_identifier = self.stack_create(
+            template=self.provider_template,
+            environment=env
+        )
+        p_res = self.client.resources.get(stack_identifier, 'test1')
+        self.assertEqual('My::TestResource', p_res.resource_type)
+
+        initial_resources = {'test1': 'My::TestResource'}
+        self.assertEqual(initial_resources,
+                         self.list_resources(stack_identifier))
+        res = self.client.resources.get(stack_identifier, 'test1')
+        # Modify the type of the resource alias to My::TestResource2
+        tmpl_update = copy.deepcopy(self.provider_template)
+        tmpl_update['resources']['test1']['type'] = 'My::TestResource2'
+        self.update_stack(stack_identifier, tmpl_update, environment=env)
+        res_a = self.client.resources.get(stack_identifier, 'test1')
+        self.assertEqual(res.physical_resource_id, res_a.physical_resource_id)
+        self.assertEqual(res.attributes['value'], res_a.attributes['value'])
+
+    def test_stack_update_alias_changes(self):
+        env = {'resource_registry':
+               {'My::TestResource': 'OS::Heat::RandomString'}}
+        stack_identifier = self.stack_create(
+            template=self.provider_template,
+            environment=env
+        )
+        p_res = self.client.resources.get(stack_identifier, 'test1')
+        self.assertEqual('My::TestResource', p_res.resource_type)
+
+        initial_resources = {'test1': 'My::TestResource'}
+        self.assertEqual(initial_resources,
+                         self.list_resources(stack_identifier))
+        res = self.client.resources.get(stack_identifier, 'test1')
+        # Modify the resource alias to point to a different type
+        env = {'resource_registry':
+               {'My::TestResource': 'OS::Heat::TestResource'}}
+        self.update_stack(stack_identifier, template=self.provider_template,
+                          environment=env)
+        res_a = self.client.resources.get(stack_identifier, 'test1')
+        self.assertNotEqual(res.physical_resource_id,
+                            res_a.physical_resource_id)
+
+    def test_stack_update_provider_type(self):
+        template = _change_rsrc_properties(
+            test_template_one_resource, ['test1'],
+            {'value': 'test_provider_template'})
+        files = {'provider.template': json.dumps(template)}
+        env = {'resource_registry':
+               {'My::TestResource': 'provider.template',
+                'My::TestResource2': 'provider.template'}}
+        stack_identifier = self.stack_create(
+            template=self.provider_template,
+            files=files,
+            environment=env
+        )
+        p_res = self.client.resources.get(stack_identifier, 'test1')
+        self.assertEqual('My::TestResource', p_res.resource_type)
+
+        initial_resources = {'test1': 'My::TestResource'}
+        self.assertEqual(initial_resources,
+                         self.list_resources(stack_identifier))
+
+        # Prove the resource is backed by a nested stack, save the ID
+        nested_identifier = self.assert_resource_is_a_stack(stack_identifier,
+                                                            'test1')
+        nested_id = nested_identifier.split('/')[-1]
+
+        # Then check the expected resources are in the nested stack
+        nested_resources = {'test1': 'OS::Heat::TestResource'}
+        self.assertEqual(nested_resources,
+                         self.list_resources(nested_identifier))
+        n_res = self.client.resources.get(nested_identifier, 'test1')
+
+        # Modify the type of the provider resource to My::TestResource2
+        tmpl_update = copy.deepcopy(self.provider_template)
+        tmpl_update['resources']['test1']['type'] = 'My::TestResource2'
+        self.update_stack(stack_identifier, tmpl_update,
+                          environment=env, files=files)
+        p_res = self.client.resources.get(stack_identifier, 'test1')
+        self.assertEqual('My::TestResource2', p_res.resource_type)
+
+        # Parent resources should be unchanged and the nested stack
+        # should have been updated in-place without replacement
+        self.assertEqual({u'test1': u'My::TestResource2'},
+                         self.list_resources(stack_identifier))
+        rsrc = self.client.resources.get(stack_identifier, 'test1')
+        self.assertEqual(rsrc.physical_resource_id, nested_id)
+
+        # Then check the expected resources are in the nested stack
+        self.assertEqual(nested_resources,
+                         self.list_resources(nested_identifier))
+        n_res2 = self.client.resources.get(nested_identifier, 'test1')
+        self.assertEqual(n_res.physical_resource_id,
+                         n_res2.physical_resource_id)
+
     def test_stack_update_provider_group(self):
         """Test two-level nested update."""
 
@@ -500,4 +599,36 @@ resources:
                           parameters={'do_fail': False},
                           existing=True)
         self.assertEqual({u'aresource': u'OS::Heat::TestResource'},
+                         self.list_resources(stack_identifier))
+
+    def test_stack_update_with_new_env(self):
+        """Update handles new resource types in the environment.
+
+        If a resource type appears during an update and the update fails,
+        retrying the update is able to find the type properly in the
+        environment.
+        """
+        stack_identifier = self.stack_create(
+            template=test_template_one_resource)
+
+        # Update with a new resource and make the update fails
+        template = _change_rsrc_properties(test_template_one_resource,
+                                           ['test1'], {'fail': True})
+        template['resources']['test2'] = {'type': 'My::TestResource'}
+        template['resources']['test1']['depends_on'] = 'test2'
+        env = {'resource_registry':
+               {'My::TestResource': 'OS::Heat::TestResource'}}
+        self.update_stack(stack_identifier,
+                          template=template,
+                          environment=env,
+                          expected_status='UPDATE_FAILED')
+
+        # Fixing the template should fix the stack
+        template = _change_rsrc_properties(template,
+                                           ['test1'], {'fail': False})
+        self.update_stack(stack_identifier,
+                          template=template,
+                          environment=env)
+        self.assertEqual({'test1': 'OS::Heat::TestResource',
+                          'test2': 'My::TestResource'},
                          self.list_resources(stack_identifier))

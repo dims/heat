@@ -34,9 +34,8 @@ from heat.engine import scheduler
 from heat.engine import stack as parser
 from heat.engine import template
 from heat.tests import common
-from heat.tests.nova import fakes as fakes_nova
+from heat.tests.openstack.nova import fakes as fakes_nova
 from heat.tests import utils
-
 
 wp_template = '''
 {
@@ -1369,20 +1368,20 @@ class InstancesTest(common.HeatTestCase):
             instance,
             security_groups,
             sg='zero',
-            get_secgroup_raises=exception.PhysicalResourceNotFound)
+            get_secgroup_raises=exception.EntityNotFound)
 
         security_groups = ['wrong_group_name',
                            '0389f747-7785-4757-b7bb-2ab07e4b09c3']
         self._test_security_groups(
             instance,
             security_groups,
-            get_secgroup_raises=exception.PhysicalResourceNotFound)
+            get_secgroup_raises=exception.EntityNotFound)
 
         security_groups = ['wrong_group_name', 'security_group_1']
         self._test_security_groups(
             instance,
             security_groups,
-            get_secgroup_raises=exception.PhysicalResourceNotFound)
+            get_secgroup_raises=exception.EntityNotFound)
 
         security_groups = ['duplicate_group_name', 'security_group_1']
         self._test_security_groups(

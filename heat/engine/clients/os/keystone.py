@@ -123,6 +123,14 @@ class KeystoneClientPlugin(client_plugin.ClientPlugin):
 
         raise exception.EntityNotFound(entity='KeystoneUser', name=user)
 
+    def get_region_id(self, region):
+        try:
+            region_obj = self.client().client.regions.get(region)
+            return region_obj.id
+        except exceptions.NotFound:
+            raise exception.EntityNotFound(entity='KeystoneRegion',
+                                           name=region)
+
 
 class KeystoneRoleConstraint(constraints.BaseCustomConstraint):
 
@@ -171,3 +179,11 @@ class KeystoneUserConstraint(constraints.BaseCustomConstraint):
 
     def validate_with_client(self, client, user):
         client.client_plugin('keystone').get_user_id(user)
+
+
+class KeystoneRegionConstraint(constraints.BaseCustomConstraint):
+
+    expected_exceptions = (exception.EntityNotFound,)
+
+    def validate_with_client(self, client, region):
+        client.client_plugin('keystone').get_region_id(region)

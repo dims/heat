@@ -25,6 +25,7 @@ import oslo_messaging as messaging
 from oslo_serialization import jsonutils
 from oslo_service import service
 from oslo_service import threadgroup
+from oslo_utils import timeutils
 from oslo_utils import uuidutils
 from osprofiler import profiler
 import six
@@ -438,7 +439,7 @@ class EngineService(service.Service):
             stack = parser.Stack.load(cnxt, stack=s)
             return dict(stack.identifier())
         else:
-            raise exception.StackNotFound(stack_name=stack_name)
+            raise exception.EntityNotFound(entity='Stack', name=stack_name)
 
     def _get_stack(self, cnxt, stack_identity, show_deleted=False):
         identity = identifier.HeatIdentifier(**stack_identity)
@@ -450,7 +451,8 @@ class EngineService(service.Service):
             eager_load=True)
 
         if s is None:
-            raise exception.StackNotFound(stack_name=identity.stack_name)
+            raise exception.EntityNotFound(entity='Stack',
+                                           name=identity.stack_name)
 
         if cnxt.tenant_id not in (identity.tenant, s.stack_user_project_id):
             # The DB API should not allow this, but sanity-check anyway..
@@ -458,7 +460,8 @@ class EngineService(service.Service):
                                           actual=cnxt.tenant_id)
 
         if identity.path or s.name != identity.stack_name:
-            raise exception.StackNotFound(stack_name=identity.stack_name)
+            raise exception.EntityNotFound(entity='Stack',
+                                           name=identity.stack_name)
 
         return s
 
@@ -1218,7 +1221,7 @@ class EngineService(service.Service):
         try:
             resource_class = resources.global_env().get_class(type_name)
         except (exception.InvalidResourceType,
-                exception.ResourceTypeNotFound,
+                exception.EntityNotFound,
                 exception.TemplateNotFound) as ex:
             raise ex
 
@@ -1267,7 +1270,7 @@ class EngineService(service.Service):
             return resource_class.resource_to_template(type_name,
                                                        template_type)
         except (exception.InvalidResourceType,
-                exception.ResourceTypeNotFound,
+                exception.EntityNotFound,
                 exception.TemplateNotFound) as ex:
             raise ex
 
@@ -1427,8 +1430,8 @@ class EngineService(service.Service):
             cnxt,
             physical_resource_id)
         if not rs:
-            raise exception.PhysicalResourceNotFound(
-                resource_id=physical_resource_id)
+            raise exception.EntityNotFound(entity='Resource',
+                                           name=physical_resource_id)
 
         stack = parser.Stack.load(cnxt, stack_id=rs.stack.id)
         resource = stack[rs.name]
@@ -1797,7 +1800,7 @@ class EngineService(service.Service):
     def service_manage_cleanup(self):
         cnxt = context.get_admin_context()
         last_updated_window = (3 * cfg.CONF.periodic_interval)
-        time_line = datetime.datetime.utcnow() - datetime.timedelta(
+        time_line = timeutils.utcnow() - datetime.timedelta(
             seconds=last_updated_window)
 
         service_refs = service_objects.Service.get_all_by_args(
@@ -1825,30 +1828,48 @@ class EngineService(service.Service):
 
     def reset_stack_status(self):
         cnxt = context.get_admin_context()
-        filters = {'status': parser.Stack.IN_PROGRESS}
+        filters = {
+            'status': parser.Stack.IN_PROGRESS,
+            'convergence': False
+        }
         stacks = stack_object.Stack.get_all(cnxt,
                                             filters=filters,
                                             tenant_safe=False,
                                             show_nested=True) or []
         for s in stacks:
-            lock = stack_lock.StackLock(cnxt, s.id, self.engine_id)
-            # If stacklock is released, means stack status may changed.
+            stack_id = s.id
+            lock = stack_lock.StackLock(cnxt, stack_id, self.engine_id)
             engine_id = lock.get_engine_id()
-            if not engine_id:
-                continue
-            # Try to steal the lock and set status to failed.
             try:
-                lock.acquire(retry=False)
+                with lock.thread_lock(retry=False):
+
+                    # refetch stack and confirm it is still IN_PROGRESS
+                    s = stack_object.Stack.get_by_id(
+                        cnxt,
+                        stack_id,
+                        tenant_safe=False,
+                        eager_load=True)
+                    if s.status != parser.Stack.IN_PROGRESS:
+                        lock.release()
+                        continue
+
+                    stk = parser.Stack.load(cnxt, stack=s,
+                                            use_stored_context=True)
+                    LOG.info(_LI('Engine %(engine)s went down when stack '
+                                 '%(stack_id)s was in action %(action)s'),
+                             {'engine': engine_id, 'action': stk.action,
+                              'stack_id': stk.id})
+
+                    # Set stack and resources status to FAILED in sub thread
+                    self.thread_group_mgr.start_with_acquired_lock(
+                        stk,
+                        lock,
+                        self.set_stack_and_resource_to_failed,
+                        stk
+                    )
             except exception.ActionInProgress:
                 continue
-            stk = parser.Stack.load(cnxt, stack=s,
-                                    use_stored_context=True)
-            LOG.info(_LI('Engine %(engine)s went down when stack %(stack_id)s'
-                         ' was in action %(action)s'),
-                     {'engine': engine_id, 'action': stk.action,
-                      'stack_id': stk.id})
-
-            # Set stack and resources status to FAILED in sub thread
-            self.thread_group_mgr.start_with_acquired_lock(
-                stk, lock, self.set_stack_and_resource_to_failed, stk
-            )
+            except Exception:
+                LOG.exception(_LE('Error while resetting stack: %s')
+                              % stack_id)
+                continue

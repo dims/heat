@@ -73,7 +73,7 @@ class ResourceTest(common.HeatTestCase):
         self.assertEqual(generic_rsrc.GenericResource, cls)
 
     def test_get_class_noexist(self):
-        self.assertRaises(exception.ResourceTypeNotFound,
+        self.assertRaises(exception.EntityNotFound,
                           resources.global_env().get_class,
                           'NoExistResourceType')
 
@@ -173,7 +173,7 @@ class ResourceTest(common.HeatTestCase):
     def test_resource_new_err(self):
         snippet = rsrc_defn.ResourceDefinition('aresource',
                                                'NoExistResourceType')
-        self.assertRaises(exception.ResourceTypeNotFound,
+        self.assertRaises(exception.EntityNotFound,
                           resource.Resource, 'aresource', snippet, self.stack)
 
     def test_resource_non_type(self):
@@ -2783,10 +2783,6 @@ class ResourceHookTest(common.HeatTestCase):
         super(ResourceHookTest, self).setUp()
 
         self.env = environment.Environment()
-        self.env.load({u'resource_registry':
-                      {u'OS::Test::GenericResource': u'GenericResourceType',
-                       u'OS::Test::ResourceWithCustomConstraint':
-                       u'ResourceWithCustomConstraint'}})
 
         self.stack = parser.Stack(utils.dummy_context(), 'test_stack',
                                   template.Template(empty_template,
@@ -2859,6 +2855,21 @@ class ResourceHookTest(common.HeatTestCase):
         res.has_hook = mock.Mock(return_value=False)
         self.assertRaises(exception.InvalidBreakPointHook,
                           res.signal, {'unset_hook': 'pre-create'})
+
+    def test_hook_call(self):
+        self.stack.env.registry.load(
+            {'resources': {'res': {'hooks': 'pre-create'}}})
+        snippet = rsrc_defn.ResourceDefinition('res',
+                                               'GenericResourceType')
+        res = resource.Resource('res', snippet, self.stack)
+        res.id = '1234'
+        task = scheduler.TaskRunner(res.create)
+        task.start()
+        task.step()
+        self.assertTrue(res.has_hook('pre-create'))
+        res.clear_hook('pre-create')
+        task.run_to_completion()
+        self.assertEqual((res.CREATE, res.COMPLETE), res.state)
 
 
 class ResourceAvailabilityTest(common.HeatTestCase):

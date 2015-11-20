@@ -36,7 +36,7 @@ from heat.objects import stack as stack_object
 from heat.tests import common
 from heat.tests.engine import tools
 from heat.tests import generic_resource as generic_rsrc
-from heat.tests.nova import fakes as fakes_nova
+from heat.tests.openstack.nova import fakes as fakes_nova
 from heat.tests import utils
 
 cfg.CONF.import_opt('engine_life_check_timeout', 'heat.common.config')
@@ -450,7 +450,7 @@ class StackServiceTest(common.HeatTestCase):
     def test_stack_identify_nonexist(self):
         ex = self.assertRaises(dispatcher.ExpectedException,
                                self.eng.identify_stack, self.ctx, 'wibble')
-        self.assertEqual(exception.StackNotFound, ex.exc_info[0])
+        self.assertEqual(exception.EntityNotFound, ex.exc_info[0])
 
     @tools.stack_context('service_create_existing_test_stack', False)
     def test_stack_create_existing(self):
@@ -853,7 +853,8 @@ class StackServiceTest(common.HeatTestCase):
             self.ctx.tenant_id, 'wibble',
             '18d06e2e-44d3-4bef-9fbf-52480d604b02')
 
-        stack_not_found_exc = exception.StackNotFound(stack_name='test')
+        stack_not_found_exc = exception.EntityNotFound(
+            entity='Stack', name='test')
         self.m.StubOutWithMock(service.EngineService, '_get_stack')
         service.EngineService._get_stack(
             self.ctx, non_exist_identifier,
@@ -863,7 +864,7 @@ class StackServiceTest(common.HeatTestCase):
         ex = self.assertRaises(dispatcher.ExpectedException,
                                self.eng.show_stack,
                                self.ctx, non_exist_identifier)
-        self.assertEqual(exception.StackNotFound, ex.exc_info[0])
+        self.assertEqual(exception.EntityNotFound, ex.exc_info[0])
         self.m.VerifyAll()
 
     def test_stack_describe_bad_tenant(self):
@@ -1142,6 +1143,7 @@ class StackServiceTest(common.HeatTestCase):
     @mock.patch('heat.engine.service.ThreadGroupManager',
                 return_value=mock.Mock())
     @mock.patch.object(stack_object.Stack, 'get_all')
+    @mock.patch.object(stack_object.Stack, 'get_by_id')
     @mock.patch('heat.engine.stack_lock.StackLock',
                 return_value=mock.Mock())
     @mock.patch.object(parser.Stack, 'load')
@@ -1151,6 +1153,7 @@ class StackServiceTest(common.HeatTestCase):
             mock_admin_context,
             mock_stack_load,
             mock_stacklock,
+            mock_get_by_id,
             mock_get_all,
             mock_thread):
         mock_admin_context.return_value = self.ctx
@@ -1159,7 +1162,19 @@ class StackServiceTest(common.HeatTestCase):
         db_stack.id = 'foo'
         db_stack.status = 'IN_PROGRESS'
         db_stack.status_reason = None
-        mock_get_all.return_value = [db_stack]
+
+        unlocked_stack = mock.MagicMock()
+        unlocked_stack.id = 'bar'
+        unlocked_stack.status = 'IN_PROGRESS'
+        unlocked_stack.status_reason = None
+
+        unlocked_stack_failed = mock.MagicMock()
+        unlocked_stack_failed.id = 'bar'
+        unlocked_stack_failed.status = 'FAILED'
+        unlocked_stack_failed.status_reason = 'because'
+
+        mock_get_all.return_value = [db_stack, unlocked_stack]
+        mock_get_by_id.side_effect = [db_stack, unlocked_stack_failed]
 
         fake_stack = mock.MagicMock()
         fake_stack.action = 'CREATE'
@@ -1168,26 +1183,36 @@ class StackServiceTest(common.HeatTestCase):
 
         mock_stack_load.return_value = fake_stack
 
-        fake_lock = mock.MagicMock()
-        fake_lock.get_engine_id.return_value = 'old-engine'
-        fake_lock.acquire.return_value = None
-        mock_stacklock.return_value = fake_lock
+        lock1 = mock.MagicMock()
+        lock1.get_engine_id.return_value = 'old-engine'
+        lock1.acquire.return_value = None
+        lock2 = mock.MagicMock()
+        lock2.acquire.return_value = None
+        mock_stacklock.side_effect = [lock1, lock2]
 
         self.eng.thread_group_mgr = mock_thread
 
         self.eng.reset_stack_status()
 
         mock_admin_context.assert_called_once_with()
-        filters = {'status': parser.Stack.IN_PROGRESS}
+        filters = {
+            'status': parser.Stack.IN_PROGRESS,
+            'convergence': False
+        }
         mock_get_all.assert_called_once_with(self.ctx,
                                              filters=filters,
                                              tenant_safe=False,
                                              show_nested=True)
+        mock_get_by_id.assert_has_calls([
+            mock.call(self.ctx, 'foo', tenant_safe=False, eager_load=True),
+            mock.call(self.ctx, 'bar', tenant_safe=False, eager_load=True),
+        ])
         mock_stack_load.assert_called_once_with(self.ctx,
                                                 stack=db_stack,
                                                 use_stored_context=True)
+        self.assertTrue(lock2.release.called)
         mock_thread.start_with_acquired_lock.assert_called_once_with(
-            fake_stack, fake_lock,
+            fake_stack, lock1,
             self.eng.set_stack_and_resource_to_failed, fake_stack
         )
 

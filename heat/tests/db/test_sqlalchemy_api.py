@@ -35,9 +35,8 @@ from heat.engine import scheduler
 from heat.engine import stack as parser
 from heat.engine import template as tmpl
 from heat.tests import common
-from heat.tests.nova import fakes as fakes_nova
+from heat.tests.openstack.nova import fakes as fakes_nova
 from heat.tests import utils
-
 
 wp_template = '''
 {
@@ -1862,7 +1861,7 @@ class DBAPIStackTest(common.HeatTestCase):
                          db_api.stack_count_all(self.ctx, tenant_safe=False))
 
     def test_purge_deleted(self):
-        now = datetime.datetime.now()
+        now = timeutils.utcnow()
         delta = datetime.timedelta(seconds=3600 * 7)
         deleted = [now - delta * i for i in range(1, 6)]
         templates = [create_raw_template(self.ctx) for i in range(5)]
@@ -1887,7 +1886,7 @@ class DBAPIStackTest(common.HeatTestCase):
                                       (), (0, 1, 2, 3, 4))
 
     def test_purge_deleted_prev_raw_template(self):
-        now = datetime.datetime.now()
+        now = timeutils.utcnow()
         templates = [create_raw_template(self.ctx) for i in range(2)]
         stacks = [create_stack(self.ctx, templates[0],
                                create_user_creds(self.ctx),

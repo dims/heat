@@ -20,6 +20,8 @@ import re
 from oslo_config import cfg
 from oslo_log import log as logging
 from oslo_utils import encodeutils
+from oslo_utils import excutils
+from oslo_utils import timeutils as oslo_timeutils
 from oslo_utils import uuidutils
 from osprofiler import profiler
 import six
@@ -68,6 +70,25 @@ class ForcedCancel(BaseException):
 
     def __str__(self):
         return "Operation cancelled"
+
+
+def reset_state_on_error(func):
+    @six.wraps(func)
+    def handle_exceptions(stack, *args, **kwargs):
+        errmsg = None
+        try:
+            return func(stack, *args, **kwargs)
+        except BaseException as exc:
+            with excutils.save_and_reraise_exception():
+                errmsg = six.text_type(exc)
+                LOG.error(_LE('Unexpected exception in %(func)s: %(msg)s'),
+                          {'func': func.__name__, 'msg': errmsg})
+        finally:
+            if stack.state == stack.IN_PROGRESS:
+                stack.set_state(stack.action, stack.FAILED, errmsg)
+                assert errmsg is not None, "Returned while IN_PROGRESS"
+
+    return handle_exceptions
 
 
 @six.python_2_unicode_compatible
@@ -792,6 +813,7 @@ class Stack(collections.Mapping):
                 r._store()
 
     @profiler.trace('Stack.create', hide_args=False)
+    @reset_state_on_error
     def create(self):
         """Create the stack and all of the resources."""
         def rollback():
@@ -893,8 +915,9 @@ class Stack(collections.Mapping):
                                            (self.status == self.FAILED))
 
     @profiler.trace('Stack.check', hide_args=False)
+    @reset_state_on_error
     def check(self):
-        self.updated_time = datetime.datetime.utcnow()
+        self.updated_time = oslo_timeutils.utcnow()
         checker = scheduler.TaskRunner(
             self.stack_task, self.CHECK,
             post_func=self.supports_check_action,
@@ -946,6 +969,7 @@ class Stack(collections.Mapping):
             return None
 
     @profiler.trace('Stack.adopt', hide_args=False)
+    @reset_state_on_error
     def adopt(self):
         """Adopt existing resources into a new stack."""
         def rollback():
@@ -965,6 +989,7 @@ class Stack(collections.Mapping):
         creator(timeout=self.timeout_secs())
 
     @profiler.trace('Stack.update', hide_args=False)
+    @reset_state_on_error
     def update(self, newstack, event=None):
         """Update the stack.
 
@@ -978,7 +1003,7 @@ class Stack(collections.Mapping):
         Update will fail if it exceeds the specified timeout. The default is
         60 minutes, set in the constructor
         """
-        self.updated_time = datetime.datetime.utcnow()
+        self.updated_time = oslo_timeutils.utcnow()
         updater = scheduler.TaskRunner(self.update_task, newstack,
                                        event=event)
         updater()
@@ -999,7 +1024,7 @@ class Stack(collections.Mapping):
         self.current_traversal = uuidutils.generate_uuid()
 
         if action is not self.CREATE:
-            self.updated_time = datetime.datetime.utcnow()
+            self.updated_time = oslo_timeutils.utcnow()
 
         if new_stack is not None:
             self.disable_rollback = new_stack.disable_rollback
@@ -1050,9 +1075,11 @@ class Stack(collections.Mapping):
             self.mark_complete(self.current_traversal)
         else:
             for rsrc_id, is_update in self.convergence_dependencies.leaves():
-                LOG.info(_LI("Triggering resource %(rsrc_id)s "
-                             "for %(is_update)s update"),
-                         {'rsrc_id': rsrc_id, 'is_update': is_update})
+                if is_update:
+                    LOG.info(_LI("Triggering resource %s for update"), rsrc_id)
+                else:
+                    LOG.info(_LI("Triggering resource %s for cleanup"),
+                             rsrc_id)
                 input_data = sync_point.serialize_input_data({})
                 self.worker_client.check_resource(self.context, rsrc_id,
                                                   self.current_traversal,
@@ -1343,7 +1370,7 @@ class Stack(collections.Mapping):
 
         stack.delete(backup=True)
 
-    def _try_get_user_creds(self, user_creds_id):
+    def _try_get_user_creds(self):
         # There are cases where the user_creds cannot be returned
         # due to credentials truncated when being saved to DB.
         # Ignore this error instead of blocking stack deletion.
@@ -1361,7 +1388,7 @@ class Stack(collections.Mapping):
         # The stack_status and reason passed in are current values, which
         # may get rewritten and returned from this method
         if self.user_creds_id:
-            user_creds = self._try_get_user_creds(self.user_creds_id)
+            user_creds = self._try_get_user_creds()
             # If we created a trust, delete it
             if user_creds is not None:
                 trust_id = user_creds.get('trust_id')
@@ -1418,6 +1445,7 @@ class Stack(collections.Mapping):
         return stack_status, reason
 
     @profiler.trace('Stack.delete', hide_args=False)
+    @reset_state_on_error
     def delete(self, action=DELETE, backup=False, abandon=False):
         """Delete all of the resources, and then the stack itself.
 
@@ -1509,6 +1537,7 @@ class Stack(collections.Mapping):
             self.id = None
 
     @profiler.trace('Stack.suspend', hide_args=False)
+    @reset_state_on_error
     def suspend(self):
         """Suspend the stack.
 
@@ -1525,7 +1554,7 @@ class Stack(collections.Mapping):
             LOG.info(_LI('%s is already suspended'), six.text_type(self))
             return
 
-        self.updated_time = datetime.datetime.utcnow()
+        self.updated_time = oslo_timeutils.utcnow()
         sus_task = scheduler.TaskRunner(
             self.stack_task,
             action=self.SUSPEND,
@@ -1534,6 +1563,7 @@ class Stack(collections.Mapping):
         sus_task(timeout=self.timeout_secs())
 
     @profiler.trace('Stack.resume', hide_args=False)
+    @reset_state_on_error
     def resume(self):
         """Resume the stack.
 
@@ -1550,7 +1580,7 @@ class Stack(collections.Mapping):
             LOG.info(_LI('%s is already resumed'), six.text_type(self))
             return
 
-        self.updated_time = datetime.datetime.utcnow()
+        self.updated_time = oslo_timeutils.utcnow()
         sus_task = scheduler.TaskRunner(
             self.stack_task,
             action=self.RESUME,
@@ -1559,9 +1589,10 @@ class Stack(collections.Mapping):
         sus_task(timeout=self.timeout_secs())
 
     @profiler.trace('Stack.snapshot', hide_args=False)
+    @reset_state_on_error
     def snapshot(self, save_snapshot_func):
         """Snapshot the stack, invoking handle_snapshot on all resources."""
-        self.updated_time = datetime.datetime.utcnow()
+        self.updated_time = oslo_timeutils.utcnow()
         sus_task = scheduler.TaskRunner(
             self.stack_task,
             action=self.SNAPSHOT,
@@ -1571,6 +1602,7 @@ class Stack(collections.Mapping):
         sus_task(timeout=self.timeout_secs())
 
     @profiler.trace('Stack.delete_snapshot', hide_args=False)
+    @reset_state_on_error
     def delete_snapshot(self, snapshot):
         """Remove a snapshot from the backends."""
         for name, rsrc in six.iteritems(self.resources):
@@ -1580,12 +1612,13 @@ class Stack(collections.Mapping):
                 scheduler.TaskRunner(rsrc.delete_snapshot, data)()
 
     @profiler.trace('Stack.restore', hide_args=False)
+    @reset_state_on_error
     def restore(self, snapshot):
         """Restore the given snapshot.
 
         Invokes handle_restore on all resources.
         """
-        self.updated_time = datetime.datetime.utcnow()
+        self.updated_time = oslo_timeutils.utcnow()
         env = environment.Environment(snapshot.data['environment'])
         files = snapshot.data['files']
         template = tmpl.Template(snapshot.data['template'],

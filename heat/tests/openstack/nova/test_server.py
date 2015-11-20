@@ -41,9 +41,8 @@ from heat.engine import stack as parser
 from heat.engine import template
 from heat.objects import resource_data as resource_data_object
 from heat.tests import common
-from heat.tests.nova import fakes as fakes_nova
+from heat.tests.openstack.nova import fakes as fakes_nova
 from heat.tests import utils
-
 
 wp_template = '''
 {
@@ -1865,7 +1864,7 @@ class ServersTest(common.HeatTestCase):
         self.m.VerifyAll()
 
     def test_server_update_flavor_resize_has_not_started(self):
-        """Test update of server flavour if server resize has not started.
+        """Test update of server flavor if server resize has not started.
 
         Server resize is asynchronous operation in nova. So when heat is
         requesting resize and polling the server then the server may still be
@@ -2428,7 +2427,7 @@ class ServersTest(common.HeatTestCase):
         self.assertIn(expected, six.text_type(exc))
         expected = 'The Nova network (bar) could not be found'
         exc = self.assertRaises(
-            exception.NovaNetworkNotFound,
+            exception.EntityNotFound,
             server._build_nics, ([{'network': 'bar'}]))
         self.assertIn(expected, six.text_type(exc))
 
