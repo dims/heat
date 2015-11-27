@@ -382,7 +382,8 @@ class Stack(collections.Mapping):
 
     @classmethod
     def load(cls, context, stack_id=None, stack=None, show_deleted=True,
-             use_stored_context=False, force_reload=False, cache_data=None):
+             use_stored_context=False, force_reload=False, cache_data=None,
+             resolve_data=True):
         """Retrieve a Stack from the database."""
         if stack is None:
             stack = stack_object.Stack.get_by_id(
@@ -399,7 +400,7 @@ class Stack(collections.Mapping):
 
         return cls._from_db(context, stack,
                             use_stored_context=use_stored_context,
-                            cache_data=cache_data)
+                            cache_data=cache_data, resolve_data=resolve_data)
 
     @classmethod
     def load_all(cls, context, limit=None, marker=None, sort_keys=None,
@@ -743,8 +744,10 @@ class Stack(collections.Mapping):
         self.status = status
         self.status_reason = reason
 
-        if cfg.CONF.convergence_engine:
-            # for convergence stack lock is not used, hence persist state
+        if self.convergence and action in (self.UPDATE, self.DELETE,
+                                           self.CREATE):
+            # if convergence and stack operation is create/update/delete,
+            # stack lock is not used, hence persist state
             self._persist_state()
             return
 
@@ -845,15 +848,15 @@ class Stack(collections.Mapping):
         All of the resources are traversed in forward or reverse dependency
         order.
 
-        :param action action that should be executed with stack resources
-        :param reverse defines if action on the resources need to be executed
+        :param action: action that should be executed with stack resources
+        :param reverse: define if action on the resources need to be executed
          in reverse order (resources - first and then res dependencies )
-        :param post_func function that need to be executed after
+        :param post_func: function that need to be executed after
         action complete on the stack
-        :param error_wait_time time to wait before cancelling all execution
+        :param error_wait_time: time to wait before cancelling all execution
         threads when an error occurred
-        :param aggregate_exceptions defines if exceptions should be aggregated
-        :param pre_completion_func function that need to be executed right
+        :param aggregate_exceptions: define if exceptions should be aggregated
+        :param pre_completion_func: function that need to be executed right
         before action completion. Uses stack ,action, status and reason as
         input parameters
         """
