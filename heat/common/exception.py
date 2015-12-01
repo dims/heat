@@ -215,6 +215,7 @@ class ResourceNotAvailable(HeatException):
 
 
 class WatchRuleNotFound(HeatException):
+    '''Keep this for AWS compatiblility.'''
     msg_fmt = _("The Watch Rule (%(watch_name)s) could not be found.")
 
 
@@ -400,10 +401,6 @@ class StopActionFailed(HeatException):
 class EventSendFailed(HeatException):
     msg_fmt = _("Failed to send message to stack (%(stack_name)s) "
                 "on other engine (%(engine_id)s)")
-
-
-class ServiceNotFound(HeatException):
-    msg_fmt = _("Service %(service_id)s not found")
 
 
 class UnsupportedObjectError(HeatException):
