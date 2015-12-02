@@ -1569,6 +1569,8 @@ class ServersTest(common.HeatTestCase):
         ud_tmpl = self._get_test_template('update_stack')[0]
         ud_tmpl.t['Resources']['WebServer']['Metadata'] = {'test': 123}
         resource_defns = ud_tmpl.resource_definitions(server.stack)
+
+        self.m.ReplayAll()
         scheduler.TaskRunner(server.update, resource_defns['WebServer'])()
         self.assertEqual({'test': 123}, server.metadata_get())
 
@@ -1578,6 +1580,7 @@ class ServersTest(common.HeatTestCase):
         self.assertEqual({'test': 123}, server.metadata_get())
         server.metadata_update()
         self.assertEqual({'test': 456}, server.metadata_get())
+        self.m.VerifyAll()
 
     def test_server_update_metadata_software_config(self):
         server, ud_tmpl = self._server_create_software_config(
@@ -1597,15 +1600,18 @@ class ServersTest(common.HeatTestCase):
         self.assertEqual(expected_md, server.metadata_get())
 
         self.m.UnsetStubs()
-        self._stub_glance_for_update()
+        self._stub_glance_for_update(rebuild=True)
 
         ud_tmpl.t['Resources']['WebServer']['Metadata'] = {'test': 123}
         resource_defns = ud_tmpl.resource_definitions(server.stack)
+
+        self.m.ReplayAll()
         scheduler.TaskRunner(server.update, resource_defns['WebServer'])()
         expected_md.update({'test': 123})
         self.assertEqual(expected_md, server.metadata_get())
         server.metadata_update()
         self.assertEqual(expected_md, server.metadata_get())
+        self.m.VerifyAll()
 
     def test_server_update_metadata_software_config_merge(self):
         md = {'os-collect-config': {'polling_interval': 10}}
@@ -1628,15 +1634,81 @@ class ServersTest(common.HeatTestCase):
         self.assertEqual(expected_md, server.metadata_get())
 
         self.m.UnsetStubs()
-        self._stub_glance_for_update()
+        self._stub_glance_for_update(rebuild=True)
 
         ud_tmpl.t['Resources']['WebServer']['Metadata'] = {'test': 123}
         resource_defns = ud_tmpl.resource_definitions(server.stack)
+
+        self.m.ReplayAll()
         scheduler.TaskRunner(server.update, resource_defns['WebServer'])()
         expected_md.update({'test': 123})
         self.assertEqual(expected_md, server.metadata_get())
         server.metadata_update()
         self.assertEqual(expected_md, server.metadata_get())
+        self.m.VerifyAll()
+
+    def test_server_update_software_config_transport(self):
+        md = {'os-collect-config': {'polling_interval': 10}}
+        server = self._server_create_software_config(
+            stack_name='update_meta_sc', md=md)
+
+        expected_md = {
+            'os-collect-config': {
+                'cfn': {
+                    'access_key_id': '4567',
+                    'metadata_url': '/v1/',
+                    'path': 'WebServer.Metadata',
+                    'secret_access_key': '8901',
+                    'stack_name': 'update_meta_sc'
+                },
+                'polling_interval': 10
+            },
+            'deployments': []}
+        self.assertEqual(expected_md, server.metadata_get())
+
+        self.m.UnsetStubs()
+        self._stub_glance_for_update(rebuild=True)
+        self.m.StubOutWithMock(swift.SwiftClientPlugin, '_create')
+
+        sc = mock.Mock()
+        sc.head_account.return_value = {
+            'x-account-meta-temp-url-key': 'secrit'
+        }
+        sc.url = 'http://192.0.2.2'
+
+        swift.SwiftClientPlugin._create().AndReturn(sc)
+
+        update_template = copy.deepcopy(server.t)
+        update_template['Properties'][
+            'software_config_transport'] = 'POLL_TEMP_URL'
+
+        self.m.ReplayAll()
+        scheduler.TaskRunner(server.update, update_template)()
+        self.assertEqual((server.UPDATE, server.COMPLETE), server.state)
+
+        md = server.metadata_get()
+        metadata_url = md['os-collect-config']['request']['metadata_url']
+        self.assertTrue(metadata_url.startswith(
+            'http://192.0.2.2/v1/AUTH_test_tenant_id/'))
+
+        expected_md = {
+            'os-collect-config': {
+                'cfn': {
+                    'access_key_id': None,
+                    'metadata_url': None,
+                    'path': None,
+                    'secret_access_key': None,
+                    'stack_name': None
+                },
+                'request': {
+                    'metadata_url': 'the_url',
+                },
+                'polling_interval': 10
+            },
+            'deployments': []}
+        md['os-collect-config']['request']['metadata_url'] = 'the_url'
+        self.assertDictEqual(expected_md, server.metadata_get())
+        self.m.VerifyAll()
 
     def test_server_update_nova_metadata(self):
         return_server = self.fc.servers.list()[1]
@@ -3448,54 +3520,6 @@ class ServersTest(common.HeatTestCase):
 
         self.m.StubOutWithMock(return_server, 'interface_attach')
         return_server.interface_attach(None, None, None).AndReturn(None)
-        self.m.ReplayAll()
-
-        scheduler.TaskRunner(server.update, update_template)()
-        self.assertEqual((server.UPDATE, server.COMPLETE), server.state)
-        self.m.VerifyAll()
-
-    def test_server_update_networks_with_uuid(self):
-        return_server = self.fc.servers.list()[1]
-        return_server.id = '5678'
-
-        self.patchobject(neutronclient.Client, 'create_port',
-                         return_value={'port': {'id': 'abcd1234'}})
-
-        server = self._create_test_server(return_server, 'networks_update')
-
-        old_networks = [
-            {'network': 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'}]
-        new_networks = [
-            {'uuid': 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'}]
-
-        server.t['Properties']['networks'] = old_networks
-        update_template = copy.deepcopy(server.t)
-        update_template['Properties']['networks'] = new_networks
-
-        self._stub_glance_for_update()
-        self.m.StubOutWithMock(self.fc.servers, 'get')
-        self.fc.servers.get('5678').MultipleTimes().AndReturn(return_server)
-
-        self.m.StubOutWithMock(return_server, 'interface_list')
-
-        poor_interfaces = [
-            self.create_fake_iface('95e25541-d26a-478d-8f36-ae1c8f6b74dc',
-                                   'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
-                                   '11.12.13.14')
-        ]
-
-        return_server.interface_list().AndReturn(poor_interfaces)
-
-        self.m.StubOutWithMock(return_server, 'interface_detach')
-        return_server.interface_detach(
-            poor_interfaces[0].port_id).AndReturn(None)
-
-        self.m.StubOutWithMock(return_server, 'interface_attach')
-        return_server.interface_attach(None, new_networks[0]['uuid'],
-                                       None).AndReturn(None)
-        self.stub_NetworkConstraint_validate()
-        self.patchobject(neutron.NeutronClientPlugin, 'resolve_network',
-                         return_value='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
         self.m.ReplayAll()
 
         scheduler.TaskRunner(server.update, update_template)()

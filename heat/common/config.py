@@ -98,6 +98,16 @@ engine_opts = [
                default='trusts',
                help=_('Select deferred auth method, '
                       'stored password or trusts.')),
+    cfg.StrOpt('reauthentication_auth_method',
+               choices=['', 'trusts'],
+               default='',
+               help=_('Allow reauthentication on token expiry, such that'
+                      ' long-running tasks may complete. Note this defeats'
+                      ' the expiry of any provided user tokens.')),
+    cfg.IntOpt('stale_token_duration',
+               default=30,
+               help=_('Gap, in seconds, to determine whether the given token '
+                      'is about to expire.'),),
     cfg.ListOpt('trusts_delegated_roles',
                 default=[],
                 help=_('Subset of trustor roles to be delegated to heat.'
@@ -414,7 +424,8 @@ def load_paste_app(app_name=None):
 
     conf_file = _get_deployment_config_file()
     if conf_file is None:
-        raise RuntimeError(_("Unable to locate config file"))
+        raise RuntimeError(_("Unable to locate config file [%s]") %
+                           cfg.CONF.paste_deploy['api_paste_config'])
 
     try:
         app = wsgi.paste_deploy_app(conf_file, app_name, cfg.CONF)
