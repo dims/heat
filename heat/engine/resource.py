@@ -180,6 +180,8 @@ class Resource(object):
         self.name = name
         self.t = definition
         self.reparse()
+        self.update_policy = self.t.update_policy(self.update_policy_schema,
+                                                  self.context)
         self.attributes_schema.update(self.base_attributes_schema)
         self.attributes = self._init_attributes()
 
@@ -429,9 +431,14 @@ class Resource(object):
         """
         if self.type() == resource_type:
             return True
-        ri = self.stack.env.get_resource_info(self.type(),
-                                              self.name)
-        return ri is not None and ri.name == resource_type
+
+        try:
+            ri = self.stack.env.get_resource_info(self.type(),
+                                                  self.name)
+        except exception.EntityNotFound:
+            return False
+        else:
+            return ri.name == resource_type
 
     def implementation_signature(self):
         """Return a tuple defining the implementation.
