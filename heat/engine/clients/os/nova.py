@@ -40,6 +40,7 @@ LOG = logging.getLogger(__name__)
 
 
 NOVACLIENT_VERSION = "2"
+CLIENT_NAME = 'nova'
 
 
 class NovaClientPlugin(client_plugin.ClientPlugin):
@@ -60,7 +61,7 @@ class NovaClientPlugin(client_plugin.ClientPlugin):
     service_types = [COMPUTE] = ['compute']
 
     def _create(self):
-        endpoint_type = self._get_client_option('nova', 'endpoint_type')
+        endpoint_type = self._get_client_option(CLIENT_NAME, 'endpoint_type')
         management_url = self.url_for(service_type=self.COMPUTE,
                                       endpoint_type=endpoint_type)
         extensions = nc.discover_extensions(NOVACLIENT_VERSION)
@@ -74,10 +75,10 @@ class NovaClientPlugin(client_plugin.ClientPlugin):
             'api_key': None,
             'extensions': extensions,
             'endpoint_type': endpoint_type,
-            'http_log_debug': self._get_client_option('nova',
+            'http_log_debug': self._get_client_option(CLIENT_NAME,
                                                       'http_log_debug'),
-            'cacert': self._get_client_option('nova', 'ca_file'),
-            'insecure': self._get_client_option('nova', 'insecure')
+            'cacert': self._get_client_option(CLIENT_NAME, 'ca_file'),
+            'insecure': self._get_client_option(CLIENT_NAME, 'insecure')
         }
 
         client = nc.Client(NOVACLIENT_VERSION, **args)
@@ -680,46 +681,41 @@ echo -e '%s\tALL=(ALL)\tNOPASSWD: ALL' >> /etc/sudoers
         return alias in self._list_extensions()
 
 
-class ServerConstraint(constraints.BaseCustomConstraint):
+class NovaBaseConstraint(constraints.BaseCustomConstraint):
 
-    expected_exceptions = (exception.EntityNotFound,)
-
-    def validate_with_client(self, client, server):
-        client.client_plugin('nova').get_server(server)
+    resource_client_name = CLIENT_NAME
 
 
-class KeypairConstraint(constraints.BaseCustomConstraint):
+class ServerConstraint(NovaBaseConstraint):
 
-    expected_exceptions = (exception.EntityNotFound,)
+    resource_getter_name = 'get_server'
+
+
+class KeypairConstraint(NovaBaseConstraint):
+
+    resource_getter_name = 'get_keypair'
 
     def validate_with_client(self, client, key_name):
         if not key_name:
             # Don't validate empty key, which can happen when you
             # use a KeyPair resource
             return True
-        client.client_plugin('nova').get_keypair(key_name)
+        super(KeypairConstraint, self).validate_with_client(client, key_name)
 
 
-class FlavorConstraint(constraints.BaseCustomConstraint):
+class FlavorConstraint(NovaBaseConstraint):
 
-    expected_exceptions = (exception.EntityNotFound,)
-
-    def validate_with_client(self, client, flavor):
-        client.client_plugin('nova').get_flavor_id(flavor)
+    resource_getter_name = 'get_flavor_id'
 
 
-class NetworkConstraint(constraints.BaseCustomConstraint):
+class NetworkConstraint(NovaBaseConstraint):
 
     expected_exceptions = (exception.EntityNotFound,
                            exception.PhysicalResourceNameAmbiguity)
 
-    def validate_with_client(self, client, network):
-        client.client_plugin('nova').get_nova_network_id(network)
+    resource_getter_name = 'get_nova_network_id'
 
 
-class HostConstraint(constraints.BaseCustomConstraint):
+class HostConstraint(NovaBaseConstraint):
 
-    expected_exceptions = (exception.EntityNotFound,)
-
-    def validate_with_client(self, client, host_name):
-        client.client_plugin('nova').get_host(host_name)
+    resource_getter_name = 'get_host'

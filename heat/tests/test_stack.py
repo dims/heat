@@ -176,19 +176,6 @@ class StackTest(common.HeatTestCase):
 
         self.m.VerifyAll()
 
-    def test_state(self):
-        self.stack = stack.Stack(self.ctx, 'test_stack', self.tmpl,
-                                 action=stack.Stack.CREATE,
-                                 status=stack.Stack.IN_PROGRESS)
-        self.assertEqual((stack.Stack.CREATE, stack.Stack.IN_PROGRESS),
-                         self.stack.state)
-        self.stack.state_set(stack.Stack.CREATE, stack.Stack.COMPLETE, 'test')
-        self.assertEqual((stack.Stack.CREATE, stack.Stack.COMPLETE),
-                         self.stack.state)
-        self.stack.state_set(stack.Stack.DELETE, stack.Stack.COMPLETE, 'test')
-        self.assertEqual((stack.Stack.DELETE, stack.Stack.COMPLETE),
-                         self.stack.state)
-
     def test_state_deleted(self):
         self.stack = stack.Stack(self.ctx, 'test_stack', self.tmpl,
                                  action=stack.Stack.CREATE,
@@ -199,25 +186,6 @@ class StackTest(common.HeatTestCase):
         self.assertIsNone(self.stack.state_set(stack.Stack.CREATE,
                                                stack.Stack.COMPLETE,
                                                'test'))
-
-    def test_state_bad(self):
-        self.stack = stack.Stack(self.ctx, 'test_stack', self.tmpl,
-                                 action=stack.Stack.CREATE,
-                                 status=stack.Stack.IN_PROGRESS)
-        self.assertEqual((stack.Stack.CREATE, stack.Stack.IN_PROGRESS),
-                         self.stack.state)
-        self.assertRaises(ValueError, self.stack.state_set,
-                          'baad', stack.Stack.COMPLETE, 'test')
-        self.assertRaises(ValueError, self.stack.state_set,
-                          stack.Stack.CREATE, 'oops', 'test')
-
-    def test_status_reason(self):
-        self.stack = stack.Stack(self.ctx, 'test_stack', self.tmpl,
-                                 status_reason='quux')
-        self.assertEqual('quux', self.stack.status_reason)
-        self.stack.state_set(stack.Stack.CREATE, stack.Stack.IN_PROGRESS,
-                             'wibble')
-        self.assertEqual('wibble', self.stack.status_reason)
 
     def test_load_nonexistant_id(self):
         self.assertRaises(exception.NotFound, stack.Stack.load,
@@ -2228,6 +2196,27 @@ class StackTest(common.HeatTestCase):
         self.assertEqual('foo', params.get('param1'))
         self.assertEqual('bar', params.get('param2'))
 
+        # test update the param2
+        loaded_stack.state_set(self.stack.CREATE, self.stack.COMPLETE,
+                               'for_update')
+        env2 = environment.Environment({'param1': 'foo', 'param2': 'new_bar'})
+        new_stack = stack.Stack(self.ctx, 'test_update',
+                                template.Template(tmpl, env=env2))
+
+        loaded_stack.update(new_stack)
+        self.assertEqual((loaded_stack.UPDATE, loaded_stack.COMPLETE),
+                         loaded_stack.state)
+        db_tpl = db_api.raw_template_get(self.ctx, loaded_stack.t.id)
+        db_params = db_tpl.environment['parameters']
+        self.assertEqual('foo', db_params['param1'])
+        self.assertEqual('cryptography_decrypt_v1', db_params['param2'][0])
+        self.assertIsNotNone(db_params['param2'][1])
+
+        loaded_stack1 = stack.Stack.load(self.ctx, stack_id=self.stack.id)
+        params = loaded_stack1.t.env.params
+        self.assertEqual('foo', params.get('param1'))
+        self.assertEqual('new_bar', params.get('param2'))
+
     def test_parameters_stored_decrypted_successful_load(self):
         """Test stack loading with disabled parameter value validation."""
         tmpl = template_format.parse('''
@@ -2591,3 +2580,67 @@ class ResetStateOnErrorTest(common.HeatTestCase):
         exc = self.assertRaises(BaseException, dummy.raise_exit_exception)
         self.assertIn('bye', str(exc))
         self.assertTrue(dummy.state_set.called)
+
+
+class StackStateSetTest(common.HeatTestCase):
+    scenarios = [
+        ('in_progress', dict(action=stack.Stack.CREATE,
+                             status=stack.Stack.IN_PROGRESS,
+                             persist_count=1, error=False)),
+        ('create_complete', dict(action=stack.Stack.CREATE,
+                                 status=stack.Stack.COMPLETE,
+                                 persist_count=0, error=False)),
+        ('create_failed', dict(action=stack.Stack.CREATE,
+                               status=stack.Stack.FAILED,
+                               persist_count=0, error=False)),
+        ('update_complete', dict(action=stack.Stack.UPDATE,
+                                 status=stack.Stack.COMPLETE,
+                                 persist_count=1, error=False)),
+        ('update_failed', dict(action=stack.Stack.UPDATE,
+                               status=stack.Stack.FAILED,
+                               persist_count=1, error=False)),
+        ('delete_complete', dict(action=stack.Stack.DELETE,
+                                 status=stack.Stack.COMPLETE,
+                                 persist_count=1, error=False)),
+        ('delete_failed', dict(action=stack.Stack.DELETE,
+                               status=stack.Stack.FAILED,
+                               persist_count=1, error=False)),
+        ('adopt_complete', dict(action=stack.Stack.ADOPT,
+                                status=stack.Stack.COMPLETE,
+                                persist_count=0, error=False)),
+        ('adopt_failed', dict(action=stack.Stack.ADOPT,
+                              status=stack.Stack.FAILED,
+                              persist_count=0, error=False)),
+        ('rollback_complete', dict(action=stack.Stack.ROLLBACK,
+                                   status=stack.Stack.COMPLETE,
+                                   persist_count=1, error=False)),
+        ('rollback_failed', dict(action=stack.Stack.ROLLBACK,
+                                 status=stack.Stack.FAILED,
+                                 persist_count=1, error=False)),
+        ('invalid_action', dict(action='action',
+                                status=stack.Stack.FAILED,
+                                persist_count=0, error=True)),
+        ('invalid_status', dict(action=stack.Stack.CREATE,
+                                status='status',
+                                persist_count=0, error=True)),
+
+    ]
+
+    def test_state(self):
+        self.tmpl = template.Template(copy.deepcopy(empty_template))
+        self.ctx = utils.dummy_context()
+        self.stack = stack.Stack(self.ctx, 'test_stack', self.tmpl,
+                                 action=stack.Stack.CREATE,
+                                 status=stack.Stack.IN_PROGRESS)
+        persist_state = self.patchobject(self.stack, '_persist_state')
+        self.assertEqual((stack.Stack.CREATE, stack.Stack.IN_PROGRESS),
+                         self.stack.state)
+        if self.error:
+            self.assertRaises(ValueError, self.stack.state_set,
+                              self.action, self.status, 'test')
+        else:
+            self.assertIsNone(self.stack.state_set(self.action,
+                                                   self.status, 'test'))
+            self.assertEqual((self.action, self.status), self.stack.state)
+            self.assertEqual('test', self.stack.status_reason)
+        self.assertEqual(self.persist_count, persist_state.call_count)

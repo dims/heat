@@ -25,13 +25,15 @@ from heat.engine import support
 class Subnet(neutron.NeutronResource):
 
     PROPERTIES = (
-        NETWORK_ID, NETWORK, CIDR, VALUE_SPECS, NAME, IP_VERSION,
-        DNS_NAMESERVERS, GATEWAY_IP, ENABLE_DHCP, ALLOCATION_POOLS,
-        TENANT_ID, HOST_ROUTES, IPV6_RA_MODE, IPV6_ADDRESS_MODE,
+        NETWORK_ID, NETWORK, SUBNETPOOL, PREFIXLEN, CIDR,
+        VALUE_SPECS, NAME, IP_VERSION, DNS_NAMESERVERS, GATEWAY_IP,
+        ENABLE_DHCP, ALLOCATION_POOLS, TENANT_ID, HOST_ROUTES,
+        IPV6_RA_MODE, IPV6_ADDRESS_MODE,
     ) = (
-        'network_id', 'network', 'cidr', 'value_specs', 'name', 'ip_version',
-        'dns_nameservers', 'gateway_ip', 'enable_dhcp', 'allocation_pools',
-        'tenant_id', 'host_routes', 'ipv6_ra_mode', 'ipv6_address_mode',
+        'network_id', 'network', 'subnetpool', 'prefixlen', 'cidr',
+        'value_specs', 'name', 'ip_version', 'dns_nameservers', 'gateway_ip',
+        'enable_dhcp', 'allocation_pools', 'tenant_id', 'host_routes',
+        'ipv6_ra_mode', 'ipv6_address_mode',
     )
 
     _ALLOCATION_POOL_KEYS = (
@@ -87,10 +89,23 @@ class Subnet(neutron.NeutronResource):
             ],
             support_status=support.SupportStatus(version='2014.2')
         ),
+        SUBNETPOOL: properties.Schema(
+            properties.Schema.STRING,
+            _('The name or ID of the subnet pool.'),
+            constraints=[
+                constraints.CustomConstraint('neutron.subnetpool')
+            ],
+            support_status=support.SupportStatus(version='6.0.0'),
+        ),
+        PREFIXLEN: properties.Schema(
+            properties.Schema.INTEGER,
+            _('Prefix length for subnet allocation from subnet pool.'),
+            constraints=[constraints.Range(min=0)],
+            support_status=support.SupportStatus(version='6.0.0'),
+        ),
         CIDR: properties.Schema(
             properties.Schema.STRING,
             _('The CIDR.'),
-            required=True,
             constraints=[
                 constraints.CustomConstraint('net_cidr')
             ]
@@ -272,8 +287,21 @@ class Subnet(neutron.NeutronResource):
 
     def validate(self):
         super(Subnet, self).validate()
+        subnetpool = self.properties[self.SUBNETPOOL]
+        prefixlen = self.properties[self.PREFIXLEN]
+        cidr = self.properties[self.CIDR]
+        if subnetpool and cidr:
+            raise exception.ResourcePropertyConflict(self.SUBNETPOOL,
+                                                     self.CIDR)
+        if not subnetpool and not cidr:
+            raise exception.PropertyUnspecifiedError(self.SUBNETPOOL,
+                                                     self.CIDR)
+        if prefixlen and cidr:
+            raise exception.ResourcePropertyConflict(self.PREFIXLEN,
+                                                     self.CIDR)
         ra_mode = self.properties[self.IPV6_RA_MODE]
         address_mode = self.properties[self.IPV6_ADDRESS_MODE]
+
         if (self.properties[self.IP_VERSION] == 4) and (
                 ra_mode or address_mode):
             msg = _('ipv6_ra_mode and ipv6_address_mode are not supported '
@@ -295,9 +323,13 @@ class Subnet(neutron.NeutronResource):
         props = self.prepare_properties(
             self.properties,
             self.physical_resource_name())
-        self.client_plugin().resolve_network(props, self.NETWORK, 'network_id')
+        self.client_plugin().resolve_network(props, self.NETWORK,
+                                             'network_id')
+        if self.SUBNETPOOL in props and props[self.SUBNETPOOL]:
+            props['subnetpool_id'] = self.client_plugin(
+                ).find_resourceid_by_name_or_id(
+                'subnetpool', props.pop('subnetpool'))
         self._null_gateway_ip(props)
-
         subnet = self.client().create_subnet({'subnet': props})['subnet']
         self.resource_id_set(subnet['id'])
 
