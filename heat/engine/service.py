@@ -183,6 +183,8 @@ class ThreadGroupManager(object):
             else:
                 lock.release()
 
+        # Link to self to allow the stack to run tasks
+        stack.thread_group_mgr = self
         th = self.start(stack.id, func, *args, **kwargs)
         th.link(release)
         return th
@@ -550,7 +552,7 @@ class EngineService(service.Service):
             multiple tags using the boolean AND expression
         :param not_tags_any: count stacks not containing these tags, combine
             multiple tags using the boolean OR expression
-        :returns: a integer representing the number of matched stacks
+        :returns: an integer representing the number of matched stacks
         """
         return stack_object.Stack.count_all(
             cnxt,
@@ -1424,7 +1426,7 @@ class EngineService(service.Service):
 
         if cfg.CONF.heat_stack_user_role in cnxt.roles:
             if not self._authorize_stack_user(cnxt, stack, resource_name):
-                LOG.warn(_LW("Access denied to resource %s"), resource_name)
+                LOG.warning(_LW("Access denied to resource %s"), resource_name)
                 raise exception.Forbidden()
 
         if resource_name not in stack:
@@ -1686,7 +1688,7 @@ class EngineService(service.Service):
             try:
                 wrn = [w.name for w in watch_rule.WatchRule.get_all(cnxt)]
             except Exception as ex:
-                LOG.warn(_LW('show_watch (all) db error %s'), ex)
+                LOG.warning(_LW('show_watch (all) db error %s'), ex)
                 return
 
         wrs = [watchrule.WatchRule.load(cnxt, w) for w in wrn]
@@ -1714,7 +1716,7 @@ class EngineService(service.Service):
         try:
             wds = watch_data.WatchData.get_all(cnxt)
         except Exception as ex:
-            LOG.warn(_LW('show_metric (all) db error %s'), ex)
+            LOG.warning(_LW('show_metric (all) db error %s'), ex)
             return
 
         result = [api.format_watch_data(w) for w in wds]

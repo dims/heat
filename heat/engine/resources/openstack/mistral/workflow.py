@@ -27,6 +27,15 @@ from heat.engine import support
 
 class Workflow(signal_responder.SignalResponder,
                resource.Resource):
+    """A resource that implements Mistral workflow.
+
+    Workflow represents a process that can be described in a various number of
+    ways and that can do some job interesting to the end user. Each workflow
+    consists of tasks (at least one) describing what exact steps should be made
+    during workflow execution.
+
+    For detailed description how to use Workflow, read Mistral documentation.
+    """
 
     support_status = support.SupportStatus(version='2015.1')
 
@@ -46,12 +55,12 @@ class Workflow(signal_responder.SignalResponder,
         TASK_NAME, TASK_DESCRIPTION, ON_ERROR, ON_COMPLETE, ON_SUCCESS,
         POLICIES, ACTION, WORKFLOW, PUBLISH, TASK_INPUT, REQUIRES,
         RETRY, WAIT_BEFORE, WAIT_AFTER, PAUSE_BEFORE, TIMEOUT,
-        WITH_ITEMS, KEEP_RESULT, TARGET
+        WITH_ITEMS, KEEP_RESULT, TARGET, JOIN
     ) = (
         'name', 'description', 'on_error', 'on_complete', 'on_success',
         'policies', 'action', 'workflow', 'publish', 'input', 'requires',
         'retry', 'wait_before', 'wait_after', 'pause_before', 'timeout',
-        'with_items', 'keep_result', 'target'
+        'with_items', 'keep_result', 'target', 'join'
     )
 
     _TASKS_TASK_DEFAULTS = [
@@ -304,6 +313,18 @@ class Workflow(signal_responder.SignalResponder,
                         _('It defines an executor to which task action '
                           'should be sent to.'),
                         support_status=support.SupportStatus(version='5.0.0')
+                    ),
+                    JOIN: properties.Schema(
+                        properties.Schema.STRING,
+                        _('Allows to synchronize multiple parallel workflow '
+                          'branches and aggregate their data. '
+                          'Valid inputs: all - the task will run only if '
+                          'all upstream tasks are completed.'
+                          ' Any numeric value - then the task will run once '
+                          'at least this number of upstream tasks are '
+                          'completed and corresponding conditions have '
+                          'triggered. '),
+                        support_status=support.SupportStatus(version='6.0.0')
                     ),
                 },
             ),
