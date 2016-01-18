@@ -134,10 +134,14 @@ class Stack(collections.Mapping):
         """
 
         def _validate_stack_name(name):
-            if not re.match("[a-zA-Z][a-zA-Z0-9_.-]*$", name):
-                message = _('Invalid stack name %s must contain '
-                            'only alphanumeric or \"_-.\" characters, '
-                            'must start with alpha') % name
+            try:
+                if not re.match("[a-zA-Z][a-zA-Z0-9_.-]*$", name):
+                    message = _('Invalid stack name %s must contain '
+                                'only alphanumeric or \"_-.\" characters, '
+                                'must start with alpha') % name
+                    raise exception.StackValidationFailed(message=message)
+            except TypeError:
+                message = _('Invalid stack name %s, must be a string') % name
                 raise exception.StackValidationFailed(message=message)
 
         if owner_id is None:
@@ -699,7 +703,7 @@ class Stack(collections.Mapping):
                     result = res.validate_template()
             except exception.HeatException as ex:
                 LOG.debug('%s', ex)
-                raise ex
+                raise
             except AssertionError:
                 raise
             except Exception as ex:
