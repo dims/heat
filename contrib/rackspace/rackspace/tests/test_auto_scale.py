@@ -215,7 +215,8 @@ class ScalingGroupTest(common.HeatTestCase):
         self.patchobject(auto_scale.Group, 'auto_scale',
                          return_value=self.fake_auto_scale)
         # mock nova and glance client methods to satisfy contraints
-        mock_im = self.patchobject(glance.GlanceClientPlugin, 'get_image_id')
+        mock_im = self.patchobject(glance.GlanceClientPlugin,
+                                   'find_image_by_name_or_id')
         mock_im.return_value = 'image-ref'
         mock_fl = self.patchobject(nova.NovaClientPlugin,
                                    'find_flavor_by_name_or_id')
@@ -313,7 +314,7 @@ Resources:
                 'flavor': 'flavor-ref',
                 'image': 'image-ref',
                 'launch_config_type': 'launch_server',
-                'load_balancers': None,
+                'load_balancers': [],
                 'key_name': "my-key",
                 'max_entities': 25,
                 'group_metadata': {'group': 'metadata'},
@@ -756,4 +757,32 @@ class AutoScaleGroupValidationTests(common.HeatTestCase):
         mock_client().list_load_balancer_pools.return_value = [
             mock.Mock(id='pool_exists'),
         ]
+        self.assertIsNone(asg.validate())
+
+    def test_validate_no_lb_specified(self, mock_client, mock_plugin):
+        asg_properties = {
+            "groupConfiguration": {
+                "name": "My Group",
+                "cooldown": 60,
+                "minEntities": 1,
+                "maxEntities": 25,
+                "metadata": {
+                    "group": "metadata",
+                },
+            },
+            "launchConfiguration": {
+                "type": "launch_server",
+                "args": {
+                    "server": {
+                        "name": "sdfsdf",
+                        "flavorRef": "ffdgdf",
+                        "imageRef": "image-ref",
+                        },
+                    },
+                },
+            }
+        rsrcdef = rsrc_defn.ResourceDefinition(
+            "test", auto_scale.Group, properties=asg_properties)
+        asg = auto_scale.Group("test", rsrcdef, self.mockstack)
+
         self.assertIsNone(asg.validate())

@@ -28,6 +28,7 @@ from heat.common import exception
 from heat.common.i18n import _
 from heat.common import template_format
 from heat.engine.clients.os import glance
+from heat.engine.clients.os import heat_plugin
 from heat.engine.clients.os import neutron
 from heat.engine.clients.os import nova
 from heat.engine.clients.os import swift
@@ -281,13 +282,16 @@ class ServersTest(common.HeatTestCase):
         return fake_interface(port, mac, ip)
 
     def _mock_get_image_id_success(self, imageId_input, imageId):
-        self.m.StubOutWithMock(glance.GlanceClientPlugin, 'get_image_id')
-        glance.GlanceClientPlugin.get_image_id(
+        self.m.StubOutWithMock(glance.GlanceClientPlugin,
+                               'find_image_by_name_or_id')
+        glance.GlanceClientPlugin.find_image_by_name_or_id(
             imageId_input).MultipleTimes().AndReturn(imageId)
 
     def _mock_get_image_id_fail(self, image_id, exp):
-        self.m.StubOutWithMock(glance.GlanceClientPlugin, 'get_image_id')
-        glance.GlanceClientPlugin.get_image_id(image_id).AndRaise(exp)
+        self.m.StubOutWithMock(glance.GlanceClientPlugin,
+                               'find_image_by_name_or_id')
+        glance.GlanceClientPlugin.find_image_by_name_or_id(
+            image_id).AndRaise(exp)
 
     def _mock_get_keypair_success(self, keypair_input, keypair):
         self.m.StubOutWithMock(nova.NovaClientPlugin, 'get_keypair')
@@ -465,9 +469,7 @@ class ServersTest(common.HeatTestCase):
                                 resource_defns['WebServer'], stack)
 
         self._mock_get_image_id_fail('Slackware',
-                                     exception.EntityNotFound(
-                                         entity='Image',
-                                         name='Slackware'))
+                                     glance.exceptions.NotFound())
         self.stub_FlavorConstraint_validate()
         self.stub_KeypairConstraint_validate()
         self.m.ReplayAll()
@@ -477,7 +479,7 @@ class ServersTest(common.HeatTestCase):
         self.assertEqual(
             "StackValidationFailed: resources.WebServer: Property error: "
             "WebServer.Properties.image: Error validating value 'Slackware': "
-            "The Image (Slackware) could not be found.",
+            "Not Found (HTTP 404)",
             six.text_type(error))
 
         self.m.VerifyAll()
@@ -493,8 +495,7 @@ class ServersTest(common.HeatTestCase):
                                 resource_defns['WebServer'], stack)
 
         self._mock_get_image_id_fail('CentOS 5.2',
-                                     exception.PhysicalResourceNameAmbiguity(
-                                         name='CentOS 5.2'))
+                                     glance.exceptions.NoUniqueMatch())
         self.stub_FlavorConstraint_validate()
         self.stub_KeypairConstraint_validate()
         self.m.ReplayAll()
@@ -502,9 +503,9 @@ class ServersTest(common.HeatTestCase):
         create = scheduler.TaskRunner(server.create)
         error = self.assertRaises(exception.ResourceFailure, create)
         self.assertEqual(
-            'StackValidationFailed: resources.WebServer: Property error: '
-            'WebServer.Properties.image: Multiple physical '
-            'resources were found with name (CentOS 5.2).',
+            "StackValidationFailed: resources.WebServer: Property error: "
+            "WebServer.Properties.image: "
+            "Error validating value 'CentOS 5.2': ",
             six.text_type(error))
 
         self.m.VerifyAll()
@@ -520,8 +521,7 @@ class ServersTest(common.HeatTestCase):
                                 resource_defns['WebServer'], stack)
 
         self._mock_get_image_id_fail('1',
-                                     exception.EntityNotFound(
-                                         entity='Image', name='1'))
+                                     glance.exceptions.NotFound())
         self.stub_KeypairConstraint_validate()
         self.stub_FlavorConstraint_validate()
         self.m.ReplayAll()
@@ -531,7 +531,7 @@ class ServersTest(common.HeatTestCase):
         self.assertEqual(
             "StackValidationFailed: resources.WebServer: Property error: "
             "WebServer.Properties.image: Error validating value '1': "
-            "The Image (1) could not be found.",
+            "Not Found (HTTP 404)",
             six.text_type(error))
 
         self.m.VerifyAll()
@@ -747,14 +747,16 @@ class ServersTest(common.HeatTestCase):
         else:
             return server
 
-    def test_server_create_software_config(self):
+    @mock.patch.object(heat_plugin.HeatClientPlugin, 'url_for')
+    def test_server_create_software_config(self, fake_url):
+        fake_url.return_value = 'the-cfn-url'
         server = self._server_create_software_config()
 
         self.assertEqual({
             'os-collect-config': {
                 'cfn': {
                     'access_key_id': '4567',
-                    'metadata_url': '/v1/',
+                    'metadata_url': 'the-cfn-url/v1/',
                     'path': 'WebServer.Metadata',
                     'secret_access_key': '8901',
                     'stack_name': 'software_config_s'
@@ -763,15 +765,17 @@ class ServersTest(common.HeatTestCase):
             'deployments': []
         }, server.metadata_get())
 
-    def test_server_create_software_config_metadata(self):
+    @mock.patch.object(heat_plugin.HeatClientPlugin, 'url_for')
+    def test_server_create_software_config_metadata(self, fake_url):
         md = {'os-collect-config': {'polling_interval': 10}}
+        fake_url.return_value = 'the-cfn-url'
         server = self._server_create_software_config(md=md)
 
         self.assertEqual({
             'os-collect-config': {
                 'cfn': {
                     'access_key_id': '4567',
-                    'metadata_url': '/v1/',
+                    'metadata_url': 'the-cfn-url/v1/',
                     'path': 'WebServer.Metadata',
                     'secret_access_key': '8901',
                     'stack_name': 'software_config_s'
@@ -1384,12 +1388,16 @@ class ServersTest(common.HeatTestCase):
 
         self.m.StubOutWithMock(nova.NovaClientPlugin, '_create')
         nova.NovaClientPlugin._create().AndReturn(self.fc)
-        self._mock_get_image_id_success('F17-x86_64-gold', 'image_id')
+        self.stub_ImageConstraint_validate()
         self.stub_NetworkConstraint_validate()
         self.stub_PortConstraint_validate()
         self.m.ReplayAll()
 
-        self.assertIsNone(server.validate())
+        error = self.assertRaises(exception.ResourcePropertyConflict,
+                                  server.validate)
+        self.assertEqual("Cannot define the following properties at the same "
+                         "time: networks/fixed_ip, networks/port.",
+                         six.text_type(error))
         self.m.VerifyAll()
 
     def test_server_validate_with_uuid_fixed_ip(self):
@@ -1599,7 +1607,9 @@ class ServersTest(common.HeatTestCase):
         self.assertEqual({'test': 456}, server.metadata_get())
         self.m.VerifyAll()
 
-    def test_server_update_metadata_software_config(self):
+    @mock.patch.object(heat_plugin.HeatClientPlugin, 'url_for')
+    def test_server_update_metadata_software_config(self, fake_url):
+        fake_url.return_value = 'the-cfn-url'
         server, ud_tmpl = self._server_create_software_config(
             stack_name='update_meta_sc', ret_tmpl=True)
 
@@ -1607,7 +1617,7 @@ class ServersTest(common.HeatTestCase):
             'os-collect-config': {
                 'cfn': {
                     'access_key_id': '4567',
-                    'metadata_url': '/v1/',
+                    'metadata_url': 'the-cfn-url/v1/',
                     'path': 'WebServer.Metadata',
                     'secret_access_key': '8901',
                     'stack_name': 'update_meta_sc'
@@ -1630,8 +1640,10 @@ class ServersTest(common.HeatTestCase):
         self.assertEqual(expected_md, server.metadata_get())
         self.m.VerifyAll()
 
-    def test_server_update_metadata_software_config_merge(self):
+    @mock.patch.object(heat_plugin.HeatClientPlugin, 'url_for')
+    def test_server_update_metadata_software_config_merge(self, fake_url):
         md = {'os-collect-config': {'polling_interval': 10}}
+        fake_url.return_value = 'the-cfn-url'
         server, ud_tmpl = self._server_create_software_config(
             stack_name='update_meta_sc', ret_tmpl=True,
             md=md)
@@ -1640,7 +1652,7 @@ class ServersTest(common.HeatTestCase):
             'os-collect-config': {
                 'cfn': {
                     'access_key_id': '4567',
-                    'metadata_url': '/v1/',
+                    'metadata_url': 'the-cfn-url/v1/',
                     'path': 'WebServer.Metadata',
                     'secret_access_key': '8901',
                     'stack_name': 'update_meta_sc'
@@ -1664,8 +1676,10 @@ class ServersTest(common.HeatTestCase):
         self.assertEqual(expected_md, server.metadata_get())
         self.m.VerifyAll()
 
-    def test_server_update_software_config_transport(self):
+    @mock.patch.object(heat_plugin.HeatClientPlugin, 'url_for')
+    def test_server_update_software_config_transport(self, fake_url):
         md = {'os-collect-config': {'polling_interval': 10}}
+        fake_url.return_value = 'the-cfn-url'
         server = self._server_create_software_config(
             stack_name='update_meta_sc', md=md)
 
@@ -1673,7 +1687,7 @@ class ServersTest(common.HeatTestCase):
             'os-collect-config': {
                 'cfn': {
                     'access_key_id': '4567',
-                    'metadata_url': '/v1/',
+                    'metadata_url': 'the-cfn-url/v1/',
                     'path': 'WebServer.Metadata',
                     'secret_access_key': '8901',
                     'stack_name': 'update_meta_sc'
@@ -2492,7 +2506,12 @@ class ServersTest(common.HeatTestCase):
                           {'v4-fixed-ip': '192.0.2.0', 'net-id': None}],
                          server._build_nics([{'port': 'aaaabbbb'},
                                              {'fixed_ip': '192.0.2.0'}]))
-
+        self.assertEqual([{'port-id': 'aaaabbbb', 'net-id': None},
+                          {'port-id': 'aaaabbbb', 'net-id': None}],
+                         server._build_nics([{'port': 'aaaabbbb',
+                                              'fixed_ip': '192.0.2.0'},
+                                             {'port': 'aaaabbbb',
+                                              'fixed_ip': '2002::2'}]))
         self.assertEqual([{'port-id': 'aaaabbbb', 'net-id': None},
                           {'v6-fixed-ip': '2002::2', 'net-id': None}],
                          server._build_nics([{'port': 'aaaabbbb'},
@@ -3646,7 +3665,7 @@ class ServersTest(common.HeatTestCase):
 
         self.m.StubOutWithMock(glance.ImageConstraint, "validate")
         # verify that validate gets invoked exactly once for update
-        ex = exception.EntityNotFound(entity='Image', name='Update Image')
+        ex = glance.exceptions.NotFound()
         glance.ImageConstraint.validate('Update Image',
                                         mox.IgnoreArg()).AndRaise(ex)
         self.m.ReplayAll()
@@ -3659,8 +3678,7 @@ class ServersTest(common.HeatTestCase):
         err = self.assertRaises(exception.ResourceFailure, updater)
         self.assertEqual('StackValidationFailed: resources.my_server: '
                          'Property error: '
-                         'WebServer.Properties.image: The Image '
-                         '(Update Image) could not be found.',
+                         'WebServer.Properties.image: Not Found (HTTP 404)',
                          six.text_type(err))
         self.m.VerifyAll()
 
@@ -3754,10 +3772,11 @@ class ServersTest(common.HeatTestCase):
         self.m.StubOutWithMock(self.fc.servers, 'get')
         self.fc.servers.get(return_server.id).AndReturn(return_server)
 
-        self.m.StubOutWithMock(glance.GlanceClientPlugin, 'get_image_id')
-        glance.GlanceClientPlugin.get_image_id(
+        self.m.StubOutWithMock(glance.GlanceClientPlugin,
+                               'find_image_by_name_or_id')
+        glance.GlanceClientPlugin.find_image_by_name_or_id(
             'F17-x86_64-gold').MultipleTimes().AndReturn(744)
-        glance.GlanceClientPlugin.get_image_id(
+        glance.GlanceClientPlugin.find_image_by_name_or_id(
             'CentOS 5.2').MultipleTimes().AndReturn(1)
 
         self.patchobject(neutron.NeutronClientPlugin, 'resolve_network',
@@ -3802,7 +3821,8 @@ class ServersTest(common.HeatTestCase):
         mock_plugin = self.patchobject(nova.NovaClientPlugin, '_create')
         mock_plugin.return_value = self.fc
 
-        get_image = self.patchobject(glance.GlanceClientPlugin, 'get_image_id')
+        get_image = self.patchobject(glance.GlanceClientPlugin,
+                                     'find_image_by_name_or_id')
         get_image.return_value = 744
 
         return_server = self.fc.servers.list()[1]
@@ -3847,7 +3867,8 @@ class ServersTest(common.HeatTestCase):
         mock_plugin = self.patchobject(nova.NovaClientPlugin, '_create')
         mock_plugin.return_value = self.fc
 
-        get_image = self.patchobject(glance.GlanceClientPlugin, 'get_image_id')
+        get_image = self.patchobject(glance.GlanceClientPlugin,
+                                     'find_image_by_name_or_id')
         get_image.return_value = 744
 
         return_server = self.fc.servers.list()[1]

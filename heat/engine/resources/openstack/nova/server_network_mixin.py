@@ -34,6 +34,7 @@ class ServerNetworkMixin(object):
         net_id = network.get(self.NETWORK_ID)
         port = network.get(self.NETWORK_PORT)
         subnet = network.get(self.NETWORK_SUBNET)
+        fixed_ip = network.get(self.NETWORK_FIXED_IP)
 
         if (net_id is None and port is None
            and net_uuid is None and subnet is None):
@@ -66,6 +67,12 @@ class ServerNetworkMixin(object):
                           id=self.NETWORK_ID,
                           network=network[self.NETWORK_ID],
                           server=self.name))
+
+        # Nova doesn't allow specify ip and port at the same time
+        if fixed_ip and port:
+            raise exception.ResourcePropertyConflict(
+                "/".join([self.NETWORKS, self.NETWORK_FIXED_IP]),
+                "/".join([self.NETWORKS, self.NETWORK_PORT]))
 
     def _validate_belonging_subnet_to_net(self, network):
         if network.get(self.NETWORK_PORT) is None and self.is_using_neutron():
@@ -216,16 +223,18 @@ class ServerNetworkMixin(object):
         for idx, net in enumerate(networks):
             self._validate_belonging_subnet_to_net(net)
             nic_info = {'net-id': self._get_network_id(net)}
-            if net.get(self.NETWORK_FIXED_IP):
-                ip = net[self.NETWORK_FIXED_IP]
-                if netutils.is_valid_ipv6(ip):
-                    nic_info['v6-fixed-ip'] = ip
-                else:
-                    nic_info['v4-fixed-ip'] = ip
             if net.get(self.NETWORK_PORT):
                 nic_info['port-id'] = net[self.NETWORK_PORT]
             elif self.is_using_neutron() and net.get(self.NETWORK_SUBNET):
                 nic_info['port-id'] = self._create_internal_port(net, idx)
+            # if nic_info including 'port-id', do not set ip for nic
+            if not nic_info.get('port-id'):
+                if net.get(self.NETWORK_FIXED_IP):
+                    ip = net[self.NETWORK_FIXED_IP]
+                    if netutils.is_valid_ipv6(ip):
+                        nic_info['v6-fixed-ip'] = ip
+                    else:
+                        nic_info['v4-fixed-ip'] = ip
             nics.append(nic_info)
         return nics
 

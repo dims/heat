@@ -379,14 +379,18 @@ class Resource(object):
                             % {'a': action, 'h': hook})
             self.trigger_hook(hook)
             LOG.info(_LI('Reached hook on %s'), six.text_type(self))
-        while self.has_hook(hook) and self.status != self.FAILED:
-            try:
-                yield
-            except Exception:
-                self.clear_hook(hook)
-                self._add_event(
-                    self.action, self.status,
-                    "Failure occurred while waiting.")
+
+            while self.has_hook(hook) and self.status != self.FAILED:
+                try:
+                    yield
+                except BaseException as exc:
+                    self.clear_hook(hook)
+                    self._add_event(
+                        self.action, self.status,
+                        "Failure occurred while waiting.")
+                    if (isinstance(exc, AssertionError) or
+                            not isinstance(exc, Exception)):
+                        raise
 
     def has_nested(self):
         # common resources have not nested, StackResource overrides it
@@ -926,23 +930,27 @@ class Resource(object):
         before_props = before.properties(self.properties_schema,
                                          self.context)
 
-        if cfg.CONF.observe_on_update:
-            try:
-                resource_reality = self.get_live_state(before_props)
-                self._update_properties_with_live_state(before_props,
-                                                        resource_reality)
-            except ValueError as ex:
-                LOG.warning(_LW("Resource cannot be updated with it's live "
-                                "state in case of "
-                                "error: %s"), six.text_type(ex))
-            except exception.EntityNotFound:
-                raise exception.UpdateReplace(self)
-
         # Regenerate the schema, else validation would fail
         self.regenerate_info_schema(after)
         after_props = after.properties(self.properties_schema,
                                        self.context)
         self.translate_properties(after_props)
+
+        if cfg.CONF.observe_on_update and before_props:
+            if not self.resource_id:
+                raise exception.UpdateReplace(self)
+
+            try:
+                resource_reality = self.get_live_state(before_props)
+                if resource_reality:
+                    self._update_properties_with_live_state(before_props,
+                                                            resource_reality)
+            except exception.EntityNotFound:
+                raise exception.UpdateReplace(self)
+            except Exception as ex:
+                LOG.warning(_LW("Resource cannot be updated with it's "
+                                "live state in case of next "
+                                "error: %s"), six.text_type(ex))
 
         yield self._break_if_required(
             self.UPDATE, environment.HOOK_PRE_UPDATE)
@@ -1492,14 +1500,12 @@ class Resource(object):
                             ex)
                 return None
 
-    def get_live_state(self, resource_properties=None):
+    def get_live_state(self, resource_properties):
         """Default implementation; should be overridden by resources.
 
+        :param resource_properties: resource's object of Properties class.
         :returns: dict of resource's real state of properties.
         """
-        if not self.resource_id:
-            raise exception.EntityNotFound(entity='Resource', name=self.name)
-
         return {}
 
     def _update_properties_with_live_state(self, resource_properties,

@@ -43,6 +43,11 @@ LOG = logging.getLogger(__name__)
 
 class Server(stack_user.StackUser, sh.SchedulerHintsMixin,
              server_network_mixin.ServerNetworkMixin):
+    """A resource for managing Nova instances.
+
+    A Server resource manages the running virtual machine instance within an
+    OpenStack cloud.
+    """
 
     PROPERTIES = (
         NAME, IMAGE, BLOCK_DEVICE_MAPPING, BLOCK_DEVICE_MAPPING_V2,
@@ -591,17 +596,19 @@ class Server(stack_user.StackUser, sh.SchedulerHintsMixin,
             zaqar = zaqar_plugin.create_for_tenant(
                 self.stack.stack_user_project_id, self._user_token())
             queue = zaqar.queue(queue_id)
-            queue.post({'body': meta, 'ttl': zaqar_plugin.DEFAULT_TTL})
             occ.update({'zaqar': {
                 'user_id': self._get_user_id(),
                 'password': self.password,
                 'auth_url': self.context.auth_url,
                 'project_id': self.stack.stack_user_project_id,
                 'queue_id': queue_id}})
+            queue.post({'body': meta, 'ttl': zaqar_plugin.DEFAULT_TTL})
 
         elif self.transport_poll_server_cfn(props):
+            heat_client_plugin = self.stack.clients.client_plugin('heat')
+            config_url = heat_client_plugin.get_cfn_metadata_server_url()
             occ.update({'cfn': {
-                'metadata_url': '%s/v1/' % cfg.CONF.heat_metadata_server_url,
+                'metadata_url': config_url,
                 'access_key_id': self.access_key,
                 'secret_access_key': self.secret_key,
                 'stack_name': self.stack.name,
@@ -731,7 +738,8 @@ class Server(stack_user.StackUser, sh.SchedulerHintsMixin,
 
         image = self.properties[self.IMAGE]
         if image:
-            image = self.client_plugin('glance').get_image_id(image)
+            image = self.client_plugin(
+                'glance').find_image_by_name_or_id(image)
 
         flavor_id = self.client_plugin().find_flavor_by_name_or_id(flavor)
 
@@ -987,7 +995,8 @@ class Server(stack_user.StackUser, sh.SchedulerHintsMixin,
             prop_diff.get(self.IMAGE_UPDATE_POLICY) or
             self.properties[self.IMAGE_UPDATE_POLICY])
         image = prop_diff[self.IMAGE]
-        image_id = self.client_plugin('glance').get_image_id(image)
+        image_id = self.client_plugin(
+            'glance').find_image_by_name_or_id(image)
         preserve_ephemeral = (
             image_update_policy == 'REBUILD_PRESERVE_EPHEMERAL')
         password = (prop_diff.get(self.ADMIN_PASS) or

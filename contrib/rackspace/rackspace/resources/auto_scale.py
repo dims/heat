@@ -121,6 +121,7 @@ class Group(resource.Resource):
             _('List of load balancers to hook the '
               'server up to. If not specified, no '
               'load balancing will be configured.'),
+            default=[],
             schema=properties.Schema(
                 properties.Schema.MAP,
                 schema={
@@ -292,15 +293,14 @@ class Group(resource.Resource):
         server_args = lcargs[self.LAUNCH_CONFIG_ARGS_SERVER]
         lb_args = lcargs.get(self.LAUNCH_CONFIG_ARGS_LOAD_BALANCERS)
         lbs = copy.deepcopy(lb_args)
-        if lbs:
-            for lb in lbs:
-                # if the port is not specified, the lbid must be that of a
-                # RackConnectV3 lb pool.
-                if not lb[self.LAUNCH_CONFIG_ARGS_LOAD_BALANCER_PORT]:
-                    del lb[self.LAUNCH_CONFIG_ARGS_LOAD_BALANCER_PORT]
-                    continue
-                lbid = int(lb[self.LAUNCH_CONFIG_ARGS_LOAD_BALANCER_ID])
-                lb[self.LAUNCH_CONFIG_ARGS_LOAD_BALANCER_ID] = lbid
+        for lb in lbs:
+            # if the port is not specified, the lbid must be that of a
+            # RackConnectV3 lb pool.
+            if not lb[self.LAUNCH_CONFIG_ARGS_LOAD_BALANCER_PORT]:
+                del lb[self.LAUNCH_CONFIG_ARGS_LOAD_BALANCER_PORT]
+                continue
+            lbid = int(lb[self.LAUNCH_CONFIG_ARGS_LOAD_BALANCER_ID])
+            lb[self.LAUNCH_CONFIG_ARGS_LOAD_BALANCER_ID] = lbid
         personality = server_args.get(
             self.LAUNCH_CONFIG_ARGS_SERVER_PERSONALITY)
         if personality:
@@ -309,7 +309,7 @@ class Group(resource.Resource):
         user_data = server_args.get(self.LAUNCH_CONFIG_ARGS_SERVER_USER_DATA)
         cdrive = (server_args.get(self.LAUNCH_CONFIG_ARGS_SERVER_CDRIVE) or
                   bool(user_data is not None and len(user_data.strip())))
-        image_id = self.client_plugin('glance').get_image_id(
+        image_id = self.client_plugin('glance').find_image_by_name_or_id(
             server_args[self.LAUNCH_CONFIG_ARGS_SERVER_IMAGE_REF])
         flavor_id = self.client_plugin('nova').find_flavor_by_name_or_id(
             server_args[self.LAUNCH_CONFIG_ARGS_SERVER_FLAVOR_REF])

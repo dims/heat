@@ -28,6 +28,15 @@ LOG = logging.getLogger(__name__)
 
 
 class SaharaCluster(resource.Resource):
+    """A resource for managing Sahara clusters.
+
+    The Cluster entity represents a collection of VM instances that all have
+    the same data processing framework installed. It is mainly characterized by
+    a VM image with a pre-installed framework which will be used for cluster
+    deployment. Users may choose one of the pre-configured Cluster Templates to
+    start a Cluster. To get access to VMs after a Cluster has started, the user
+    should specify a keypair.
+    """
 
     PROPERTIES = (
         NAME, PLUGIN_NAME, HADOOP_VERSION, CLUSTER_TEMPLATE_ID,
@@ -196,7 +205,8 @@ class SaharaCluster(resource.Resource):
         image_id = (self.properties[self.IMAGE_ID] or
                     self.properties[self.IMAGE])
         if image_id:
-            image_id = self.client_plugin('glance').get_image_id(image_id)
+            image_id = self.client_plugin(
+                'glance').find_image_by_name_or_id(image_id)
 
         # check that image is provided in case when
         # cluster template is missing one
