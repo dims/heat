@@ -178,10 +178,6 @@ class TemplateResource(stack_resource.StackResource):
         self._get_resource_info(definition)
         self._generate_schema(definition)
 
-    def implementation_signature(self):
-        self._generate_schema(self.t)
-        return super(TemplateResource, self).implementation_signature()
-
     def template_data(self):
         # we want to have the latest possible template.
         # 1. look in files
@@ -304,7 +300,7 @@ class TemplateResource(stack_resource.StackResource):
 
         return self.nested().identifier().arn()
 
-    def FnGetAtt(self, key, *path):
+    def get_attribute(self, key, *path):
         stack = self.nested()
         if stack is None:
             return None

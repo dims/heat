@@ -140,16 +140,24 @@ class Resource(object):
 
             assert issubclass(ResourceClass, Resource)
 
-        if not ResourceClass.is_service_available(stack.context):
-            ex = exception.ResourceTypeUnavailable(
-                service_name=ResourceClass.default_client_name,
-                resource_type=definition.resource_type
+        if not stack.service_check_defer:
+            ResourceClass._validate_service_availability(
+                stack.context,
+                definition.resource_type
             )
+
+        return super(Resource, cls).__new__(ResourceClass)
+
+    @classmethod
+    def _validate_service_availability(cls, context, resource_type):
+        if not cls.is_service_available(context):
+            ex = exception.ResourceTypeUnavailable(
+                service_name=cls.default_client_name,
+                resource_type=resource_type
+                )
             LOG.info(six.text_type(ex))
 
             raise ex
-
-        return super(Resource, cls).__new__(ResourceClass)
 
     def _init_attributes(self):
         """The method that defines attribute initialization for a resource.
@@ -426,15 +434,6 @@ class Resource(object):
             return False
         else:
             return ri.name == resource_type
-
-    def implementation_signature(self):
-        """Return a tuple defining the implementation.
-
-        This should be broken down into a definition and an
-        implementation version.
-        """
-
-        return (self.__class__.__name__, self.support_status.version)
 
     def identifier(self):
         """Return an identifier for this resource."""
@@ -865,15 +864,6 @@ class Resource(object):
                                     and self.status == self.COMPLETE):
             raise exception.UpdateReplace(self)
 
-        if prev_resource is not None:
-            cur_class_def, cur_ver = self.implementation_signature()
-            prev_class_def, prev_ver = prev_resource.implementation_signature()
-
-            if prev_class_def != cur_class_def:
-                raise exception.UpdateReplace(self.name)
-            if prev_ver != cur_ver:
-                return True
-
         if before != after.freeze():
             return True
 
@@ -935,6 +925,7 @@ class Resource(object):
         after_props = after.properties(self.properties_schema,
                                        self.context)
         self.translate_properties(after_props)
+        self.translate_properties(before_props)
 
         if cfg.CONF.observe_on_update and before_props:
             if not self.resource_id:
@@ -1155,6 +1146,12 @@ class Resource(object):
         in an overridden validate() such as accessing properties
         may not work.
         """
+        if self.stack.service_check_defer:
+            self._validate_service_availability(
+                self.stack.context,
+                self.t.resource_type
+            )
+
         function.validate(self.t)
         self.validate_deletion_policy(self.t.deletion_policy())
         self.t.update_policy(self.update_policy_schema,
@@ -1572,6 +1569,11 @@ class Resource(object):
         return (self.action, self.status)
 
     def get_reference_id(self):
+        """Default implementation for function get_resource.
+
+        This may be overridden by resource plugins to add extra
+        logic specific to the resource implementation.
+        """
         if self.resource_id is not None:
             return six.text_type(self.resource_id)
         else:
@@ -1593,6 +1595,20 @@ class Resource(object):
         else:
             return Resource.get_reference_id(self)
 
+    def get_attribute(self, key, *path):
+        """Default implementation for function get_attr and Fn::GetAtt.
+
+        This may be overridden by resource plugins to add extra
+        logic specific to the resource implementation.
+        """
+        try:
+            attribute = self.attributes[key]
+        except KeyError:
+            raise exception.InvalidTemplateAttribute(resource=self.name,
+                                                     key=key)
+
+        return attributes.select_from_attribute(attribute, path)
+
     def FnGetAtt(self, key, *path):
         """For the intrinsic function Fn::GetAtt.
 
@@ -1608,14 +1624,7 @@ class Resource(object):
             attribute = self.stack.cache_data_resource_attribute(
                 self.name, complex_key)
             return attribute
-        else:
-            try:
-                attribute = self.attributes[key]
-            except KeyError:
-                raise exception.InvalidTemplateAttribute(resource=self.name,
-                                                         key=key)
-
-            return attributes.select_from_attribute(attribute, path)
+        return self.get_attribute(key, *path)
 
     def FnGetAtts(self):
         """For the intrinsic function get_attr which returns all attributes.

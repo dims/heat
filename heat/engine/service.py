@@ -292,7 +292,7 @@ class EngineService(service.Service):
     by the RPC caller.
     """
 
-    RPC_API_VERSION = '1.21'
+    RPC_API_VERSION = '1.24'
 
     def __init__(self, host, topic):
         super(EngineService, self).__init__()
@@ -650,7 +650,8 @@ class EngineService(service.Service):
         return stack
 
     @context.request_context
-    def preview_stack(self, cnxt, stack_name, template, params, files, args):
+    def preview_stack(self, cnxt, stack_name, template, params, files,
+                      args, environment_files=None):
         """Simulate a new stack using the provided template.
 
         Note that at this stage the template has already been fetched from the
@@ -662,6 +663,9 @@ class EngineService(service.Service):
         :param params: Stack Input Params
         :param files: Files referenced from the template
         :param args: Request parameters/args passed from API
+        :param environment_files: optional ordered list of environment file
+               names included in the files dict
+        :type  environment_files: list or None
         """
 
         LOG.info(_LI('previewing stack %s'), stack_name)
@@ -679,7 +683,8 @@ class EngineService(service.Service):
         return api.format_stack_preview(stack)
 
     @context.request_context
-    def create_stack(self, cnxt, stack_name, template, params, files, args,
+    def create_stack(self, cnxt, stack_name, template, params, files,
+                     args, environment_files=None,
                      owner_id=None, nested_depth=0, user_creds_id=None,
                      stack_user_project_id=None, parent_resource_name=None):
         """Create a new stack using the template provided.
@@ -693,6 +698,9 @@ class EngineService(service.Service):
         :param params: Stack Input Params
         :param files: Files referenced from the template
         :param args: Request parameters/args passed from API
+        :param environment_files: optional ordered list of environment file
+               names included in the files dict
+        :type  environment_files: list or None
         :param owner_id: parent stack ID for nested stacks, only expected when
                          called from another heat-engine (not a user option)
         :param nested_depth: the nested depth for nested stacks, only expected
@@ -840,7 +848,7 @@ class EngineService(service.Service):
 
     @context.request_context
     def update_stack(self, cnxt, stack_identity, template, params,
-                     files, args):
+                     files, args, environment_files=None):
         """Update an existing stack based on the provided template and params.
 
         Note that at this stage the template has already been fetched from the
@@ -852,6 +860,9 @@ class EngineService(service.Service):
         :param params: Stack Input Params
         :param files: Files referenced from the template
         :param args: Request parameters/args passed from API
+        :param environment_files: optional ordered list of environment file
+               names included in the files dict
+        :type  environment_files: list or None
         """
         # Get the database representation of the existing stack
         db_stack = self._get_stack(cnxt, stack_identity)
@@ -891,8 +902,8 @@ class EngineService(service.Service):
 
     @context.request_context
     def preview_update_stack(self, cnxt, stack_identity, template, params,
-                             files, args):
-        """Show the resources that would be updated.
+                             files, args, environment_files=None):
+        """Shows the resources that would be updated.
 
         The preview_update_stack method shows the resources that would be
         changed with an update to an existing stack based on the provided
@@ -984,7 +995,8 @@ class EngineService(service.Service):
 
     @context.request_context
     def validate_template(self, cnxt, template, params=None, files=None,
-                          show_nested=False):
+                          environment_files=None, show_nested=False,
+                          ignorable_errors=None):
         """Check the validity of a template.
 
         Checks, so far as we can, that a template is valid, and returns
@@ -995,12 +1007,28 @@ class EngineService(service.Service):
         :param template: Template of stack you want to create.
         :param params: Stack Input Params
         :param files: Files referenced from the template
+        :param environment_files: optional ordered list of environment file
+               names included in the files dict
+        :type  environment_files: list or None
         :param show_nested: if True, any nested templates will be checked
+        :param ignorable_errors: List of error_code to be ignored as part of
+        validation
         """
         LOG.info(_LI('validate_template'))
         if template is None:
             msg = _("No Template provided.")
             return webob.exc.HTTPBadRequest(explanation=msg)
+
+        service_check_defer = False
+        if ignorable_errors:
+            invalid_codes = (set(ignorable_errors) -
+                             set(exception.ERROR_CODE_MAP.keys()))
+            if invalid_codes:
+                msg = (_("Invalid codes in ignore_errors : %s") %
+                       list(invalid_codes))
+                return webob.exc.HTTPBadRequest(explanation=msg)
+
+            service_check_defer = True
 
         env = environment.Environment(params)
         tmpl = templatem.Template(template, files=files, env=env)
@@ -1010,10 +1038,12 @@ class EngineService(service.Service):
             return {'Error': six.text_type(ex)}
 
         stack_name = 'dummy'
-        stack = parser.Stack(cnxt, stack_name, tmpl, strict_validate=False)
-        stack.resource_validate = False
+        stack = parser.Stack(cnxt, stack_name, tmpl,
+                             strict_validate=False,
+                             resource_validate=False,
+                             service_check_defer=service_check_defer)
         try:
-            stack.validate()
+            stack.validate(ignorable_errors=ignorable_errors)
         except exception.StackValidationFailed as ex:
             return {'Error': six.text_type(ex)}
 
@@ -1636,7 +1666,7 @@ class EngineService(service.Service):
         self.resource_enforcer.enforce_stack(stack)
         snapshot = snapshot_object.Snapshot.get_snapshot_by_stack(
             cnxt, snapshot_id, s)
-        # FIXME(pas-ha) has to be ammended to deny restoring stacks
+        # FIXME(pas-ha) has to be amended to deny restoring stacks
         # that have disallowed for current user
 
         self.thread_group_mgr.start_with_lock(cnxt, stack, self.engine_id,
