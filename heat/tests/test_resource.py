@@ -36,6 +36,8 @@ from heat.engine import environment
 from heat.engine import properties
 from heat.engine import resource
 from heat.engine import resources
+from heat.engine.resources.openstack.heat import none_resource
+from heat.engine.resources.openstack.heat import test_resource
 from heat.engine import rsrc_defn
 from heat.engine import scheduler
 from heat.engine import stack as parser
@@ -2872,11 +2874,13 @@ class ResourceHookTest(common.HeatTestCase):
                           res.signal, {'unset_hook': 'unknown_hook'})
         self.assertFalse(res.clear_hook.called)
 
-        res.signal({'unset_hook': 'pre-create'})
+        result = res.signal({'unset_hook': 'pre-create'})
         res.clear_hook.assert_called_with('pre-create')
+        self.assertFalse(result)
 
-        res.signal({'unset_hook': 'pre-update'})
+        result = res.signal({'unset_hook': 'pre-update'})
         res.clear_hook.assert_called_with('pre-update')
+        self.assertFalse(result)
 
         res.has_hook = mock.Mock(return_value=False)
         self.assertRaises(exception.InvalidBreakPointHook,
@@ -3070,12 +3074,13 @@ class ResourceAvailabilityTest(common.HeatTestCase):
             ['test_type']
         )
         mock_client_plugin.has_extension = mock.Mock(
-            side_effect=Exception("error"))
+            side_effect=exception.AuthorizationFailure())
         mock_client_plugin_method.return_value = mock_client_plugin
 
-        self.assertFalse(
-            generic_rsrc.ResourceWithDefaultClientNameExt.is_service_available(
-                context=mock.Mock()))
+        self.assertRaises(
+            exception.AuthorizationFailure,
+            generic_rsrc.ResourceWithDefaultClientNameExt.is_service_available,
+            context=mock.Mock())
         mock_client_plugin_method.assert_called_once_with(
             generic_rsrc.ResourceWithDefaultClientName.default_client_name)
         mock_service_types.assert_called_once_with()
@@ -3112,8 +3117,26 @@ class ResourceAvailabilityTest(common.HeatTestCase):
             service_name=(generic_rsrc.ResourceWithDefaultClientName
                           .default_client_name))
 
-    def test_service_not_deployed_throws_exception(self):
-        """Test raising exception when the service is not deployed.
+    @mock.patch.object(clients.OpenStackClients, 'client_plugin')
+    def test_service_not_installed_required_extension(
+            self,
+            mock_client_plugin_method):
+        """Test availability of resource when the client is not installed.
+
+        When the client is not installed, we can't create the resource properly
+        so raise a proper exception for information.
+        """
+        mock_client_plugin_method.return_value = None
+
+        self.assertRaises(
+            exception.ClientNotAvailable,
+            generic_rsrc.ResourceWithDefaultClientNameExt.is_service_available,
+            context=mock.Mock())
+        mock_client_plugin_method.assert_called_once_with(
+            generic_rsrc.ResourceWithDefaultClientName.default_client_name)
+
+    def test_service_not_available_returns_false(self):
+        """Test when the service is not in service catalog.
 
         When the service is not deployed, make sure resource is throwing
         ResourceTypeUnavailable exception.
@@ -3138,9 +3161,45 @@ class ResourceAvailabilityTest(common.HeatTestCase):
                 definition=definition,
                 stack=mock_stack)
 
-            msg = ('HEAT-E99001 Service sample does not have required endpoint'
-                   ' in service catalog for the resource type'
-                   ' UnavailableResourceType')
+            msg = ('HEAT-E99001 Service sample is not available for resource '
+                   'type UnavailableResourceType, reason: '
+                   'Service endpoint not in service catalog.')
+            self.assertEqual(msg,
+                             six.text_type(ex),
+                             'invalid exception message')
+
+            # Make sure is_service_available is called on the right class
+            mock_method.assert_called_once_with(mock_stack.context)
+
+    def test_service_not_available_throws_exception(self):
+        """Test for other exceptions when checking for service availability
+
+        Ex. when client throws an error, make sure resource is throwing
+        ResourceTypeUnavailable that contains the orginal exception message.
+        """
+        with mock.patch.object(
+                generic_rsrc.ResourceWithDefaultClientName,
+                'is_service_available') as mock_method:
+            mock_method.side_effect = exception.AuthorizationFailure()
+
+            definition = rsrc_defn.ResourceDefinition(
+                name='Test Resource',
+                resource_type='UnavailableResourceType')
+
+            mock_stack = mock.MagicMock()
+            mock_stack.service_check_defer = False
+
+            ex = self.assertRaises(
+                exception.ResourceTypeUnavailable,
+                generic_rsrc.ResourceWithDefaultClientName.__new__,
+                cls=generic_rsrc.ResourceWithDefaultClientName,
+                name='test_stack',
+                definition=definition,
+                stack=mock_stack)
+
+            msg = ('HEAT-E99001 Service sample is not available for resource '
+                   'type UnavailableResourceType, reason: '
+                   'Authorization failed.')
             self.assertEqual(msg,
                              six.text_type(ex),
                              'invalid exception message')
@@ -3335,6 +3394,15 @@ class TestLiveStateUpdate(common.HeatTestCase):
         self.assertEqual((res.CREATE, res.COMPLETE), res.state)
         return res
 
+    def _clean_tests_after_resource_live_state(self, res):
+        """Revert changes for correct work of other tests.
+
+        Need to revert changes of resource properties schema for correct work
+        of other tests.
+        """
+        for prop in six.itervalues(res.properties.props):
+            prop.schema.update_allowed = False
+
     def test_update_resource_live_state(self):
         res = self._prepare_resource_live_state()
         res.resource_id = self.resource_id
@@ -3356,7 +3424,158 @@ class TestLiveStateUpdate(common.HeatTestCase):
                              side_effect=[self.live_state])
             self.assertRaises(self.expected,
                               scheduler.TaskRunner(res.update, utmpl))
-        # NOTE(prazumovsky): need to revert changes of resource properties
-        # schema for correct work of other tests.
-        for prop in six.itervalues(res.properties.props):
-            prop.schema.update_allowed = False
+        self._clean_tests_after_resource_live_state(res)
+
+    def test_get_live_resource_data_success(self):
+        res = self._prepare_resource_live_state()
+        res.resource_id = self.resource_id
+        res._show_resource = mock.MagicMock(return_value={'a': 'b'})
+        self.assertEqual({'a': 'b'}, res.get_live_resource_data())
+        self._clean_tests_after_resource_live_state(res)
+
+    def test_get_live_resource_data_not_found(self):
+        res = self._prepare_resource_live_state()
+        res.resource_id = self.resource_id
+        res._show_resource = mock.MagicMock(
+            side_effect=[exception.NotFound()])
+        res.client_plugin = mock.MagicMock()
+        res.client_plugin().is_not_found = mock.MagicMock(return_value=True)
+        ex = self.assertRaises(exception.EntityNotFound,
+                               res.get_live_resource_data)
+        self.assertEqual('The Resource (test_resource) could not be found.',
+                         six.text_type(ex))
+        self._clean_tests_after_resource_live_state(res)
+
+    def test_get_live_resource_data_other_error(self):
+        res = self._prepare_resource_live_state()
+        res.resource_id = self.resource_id
+        res._show_resource = mock.MagicMock(
+            side_effect=[exception.Forbidden()])
+        res.client_plugin = mock.MagicMock()
+        res.client_plugin().is_not_found = mock.MagicMock(return_value=False)
+        self.assertRaises(exception.Forbidden, res.get_live_resource_data)
+        self._clean_tests_after_resource_live_state(res)
+
+
+class ResourceUpdateRestrictionTest(common.HeatTestCase):
+    def setUp(self):
+        super(ResourceUpdateRestrictionTest, self).setUp()
+        resource._register_class('TestResourceType',
+                                 test_resource.TestResource)
+        resource._register_class('NoneResourceType',
+                                 none_resource.NoneResource)
+        self.tmpl = {
+            'heat_template_version': '2013-05-23',
+            'resources': {
+                'bar': {
+                    'type': 'TestResourceType',
+                    'properties': {
+                        'value': '1234',
+                        'update_replace': False
+                    }
+                }
+            }
+        }
+
+    def create_resource(self):
+        self.stack = parser.Stack(utils.dummy_context(), 'test_stack',
+                                  template.Template(self.tmpl, env=self.env),
+                                  stack_id=str(uuid.uuid4()))
+        res = self.stack['bar']
+        scheduler.TaskRunner(res.create)()
+        return res
+
+    def test_update_restricted(self):
+        self.env_snippet = {u'resource_registry': {
+            u'resources': {
+                'bar': {'restricted_actions': 'update'}
+            }
+        }
+        }
+        self.env = environment.Environment()
+        self.env.load(self.env_snippet)
+        res = self.create_resource()
+        ev = self.patchobject(res, '_add_event')
+        props = self.tmpl['resources']['bar']['properties']
+        props['value'] = '4567'
+        snippet = rsrc_defn.ResourceDefinition('bar',
+                                               'TestResourceType',
+                                               props)
+        error = self.assertRaises(exception.ResourceFailure,
+                                  scheduler.TaskRunner(res.update, snippet))
+
+        self.assertEqual('ResourceActionRestricted: resources.bar: '
+                         'update is restricted for resource.',
+                         six.text_type(error))
+        self.assertEqual((res.CREATE, res.COMPLETE), res.state)
+        ev.assert_called_with(res.UPDATE, res.FAILED,
+                              'update is restricted for resource.')
+
+    def test_replace_rstricted(self):
+        self.env_snippet = {u'resource_registry': {
+            u'resources': {
+                'bar': {'restricted_actions': 'replace'}
+            }
+        }
+        }
+        self.env = environment.Environment()
+        self.env.load(self.env_snippet)
+        res = self.create_resource()
+        ev = self.patchobject(res, '_add_event')
+        props = self.tmpl['resources']['bar']['properties']
+        props['update_replace'] = True
+        snippet = rsrc_defn.ResourceDefinition('bar',
+                                               'TestResourceType',
+                                               props)
+        error = self.assertRaises(exception.ResourceFailure,
+                                  scheduler.TaskRunner(res.update, snippet))
+        self.assertEqual('ResourceActionRestricted: resources.bar: '
+                         'replace is restricted for resource.',
+                         six.text_type(error))
+        self.assertEqual((res.CREATE, res.COMPLETE), res.state)
+        ev.assert_called_with(res.UPDATE, res.FAILED,
+                              'replace is restricted for resource.')
+
+    def test_update_with_replace_rstricted(self):
+        self.env_snippet = {u'resource_registry': {
+            u'resources': {
+                'bar': {'restricted_actions': 'replace'}
+            }
+        }
+        }
+        self.env = environment.Environment()
+        self.env.load(self.env_snippet)
+        res = self.create_resource()
+        ev = self.patchobject(res, '_add_event')
+        props = self.tmpl['resources']['bar']['properties']
+        props['value'] = '4567'
+        snippet = rsrc_defn.ResourceDefinition('bar',
+                                               'TestResourceType',
+                                               props)
+        self.assertIsNone(scheduler.TaskRunner(res.update, snippet)())
+        self.assertEqual((res.UPDATE, res.COMPLETE), res.state)
+        ev.assert_called_with(res.UPDATE, res.COMPLETE,
+                              'state changed')
+
+    def test_replace_with_update_rstricted(self):
+        self.env_snippet = {u'resource_registry': {
+            u'resources': {
+                'bar': {'restricted_actions': 'update'}
+            }
+        }
+        }
+        self.env = environment.Environment()
+        self.env.load(self.env_snippet)
+        res = self.create_resource()
+        ev = self.patchobject(res, '_add_event')
+        prep_replace = self.patchobject(res, 'prepare_for_replace')
+        props = self.tmpl['resources']['bar']['properties']
+        props['update_replace'] = True
+        snippet = rsrc_defn.ResourceDefinition('bar',
+                                               'TestResourceType',
+                                               props)
+        error = self.assertRaises(exception.UpdateReplace,
+                                  scheduler.TaskRunner(res.update, snippet))
+        self.assertIn('requires replacement', six.text_type(error))
+        self.assertEqual(1, prep_replace.call_count)
+        ev.assert_not_called()

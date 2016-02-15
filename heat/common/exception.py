@@ -33,8 +33,8 @@ LOG = logging.getLogger(__name__)
 
 # TODO(kanagaraj-manickam): Expose this to user via REST API
 ERROR_CODE_MAP = {
-    '99001': _("Service %(service_name)s does not have required endpoint in "
-               "service catalog for the resource type %(resource_type)s")
+    '99001': _("Service %(service_name)s is not available for resource "
+               "type %(resource_type)s, reason: %(reason)s")
 }
 
 
@@ -236,8 +236,16 @@ class InvalidBreakPointHook(HeatException):
     msg_fmt = _("%(message)s")
 
 
+class InvalidRestrictedAction(HeatException):
+    msg_fmt = _("%(message)s")
+
+
 class ResourceNotAvailable(HeatException):
     msg_fmt = _("The Resource (%(resource_name)s) is not available.")
+
+
+class ClientNotAvailable(HeatException):
+    msg_fmt = _("The client (%(client_name)s) is not available.")
 
 
 class WatchRuleNotFound(EntityNotFound):
@@ -310,6 +318,10 @@ class NotSupported(HeatException):
 
 class ResourceActionNotSupported(HeatException):
     msg_fmt = _("%(action)s is not supported for resource.")
+
+
+class ResourceActionRestricted(HeatException):
+    msg_fmt = _("%(action)s is restricted for resource.")
 
 
 class ResourcePropertyConflict(HeatException):

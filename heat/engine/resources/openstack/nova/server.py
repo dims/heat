@@ -34,6 +34,7 @@ from heat.engine.resources.openstack.nova import server_network_mixin
 from heat.engine.resources import scheduler_hints as sh
 from heat.engine.resources import stack_user
 from heat.engine import support
+from heat.engine import translation
 from heat.rpc import api as rpc_api
 
 cfg.CONF.import_opt('default_software_config_transport', 'heat.common.config')
@@ -545,9 +546,9 @@ class Server(stack_user.StackUser, sh.SchedulerHintsMixin,
     entity = 'servers'
 
     def translation_rules(self, props):
-        return [properties.TranslationRule(
+        return [translation.TranslationRule(
             props,
-            properties.TranslationRule.REPLACE,
+            translation.TranslationRule.REPLACE,
             source_path=[self.NETWORKS, self.NETWORK_ID],
             value_name=self.NETWORK_UUID)]
 
@@ -1038,30 +1039,22 @@ class Server(stack_user.StackUser, sh.SchedulerHintsMixin,
 
         return updaters
 
-    def _needs_update(self, after, before, after_props, before_props,
-                      prev_resource, check_init_complete=True):
-        result = super(Server, self)._needs_update(
-            after, before, after_props, before_props, prev_resource,
-            check_init_complete=check_init_complete)
-
-        prop_diff = self.update_template_diff_properties(after_props,
-                                                         before_props)
-
-        if self.FLAVOR in prop_diff:
+    def needs_replace_with_prop_diff(self, changed_properties_set,
+                                     after_props, before_props):
+        """Needs replace based on prop_diff """
+        if self.FLAVOR in changed_properties_set:
             flavor_update_policy = (
-                prop_diff.get(self.FLAVOR_UPDATE_POLICY) or
-                self.properties[self.FLAVOR_UPDATE_POLICY])
+                after_props.get(self.FLAVOR_UPDATE_POLICY) or
+                before_props.get(self.FLAVOR_UPDATE_POLICY))
             if flavor_update_policy == 'REPLACE':
-                raise exception.UpdateReplace(self.name)
+                return True
 
-        if self.IMAGE in prop_diff:
+        if self.IMAGE in changed_properties_set:
             image_update_policy = (
-                prop_diff.get(self.IMAGE_UPDATE_POLICY) or
-                self.properties[self.IMAGE_UPDATE_POLICY])
+                after_props.get(self.IMAGE_UPDATE_POLICY) or
+                before_props.get(self.IMAGE_UPDATE_POLICY))
             if image_update_policy == 'REPLACE':
-                raise exception.UpdateReplace(self.name)
-
-        return result
+                return True
 
     def handle_update(self, json_snippet, tmpl_diff, prop_diff):
         if 'Metadata' in tmpl_diff:

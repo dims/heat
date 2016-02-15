@@ -368,6 +368,7 @@ class EngineService(service.Service):
         self._client = rpc_messaging.get_rpc_client(
             version=self.RPC_API_VERSION)
 
+        self._configure_db_conn_pool_size()
         self.service_manage_cleanup()
         self.manage_thread_grp = threadgroup.ThreadGroup()
         self.manage_thread_grp.add_timer(cfg.CONF.periodic_interval,
@@ -375,6 +376,18 @@ class EngineService(service.Service):
         self.manage_thread_grp.add_thread(self.reset_stack_status)
 
         super(EngineService, self).start()
+
+    def _configure_db_conn_pool_size(self):
+        # bug #1491185
+        # Set the DB max_overflow to match the thread pool size.
+        # The overflow connections are automatically closed when they are
+        # not used; setting it is better than setting DB max_pool_size.
+        worker_pool_size = cfg.CONF.executor_thread_pool_size
+        # Update max_overflow only if it is not adequate
+        if ((cfg.CONF.database.max_overflow is None) or
+                (cfg.CONF.database.max_overflow < worker_pool_size)):
+            cfg.CONF.set_override('max_overflow', worker_pool_size,
+                                  group='database')
 
     def _stop_rpc_server(self):
         # Stop rpc connection at first for preventing new requests
@@ -1383,11 +1396,19 @@ class EngineService(service.Service):
         if resource_class.support_status.status == support.HIDDEN:
             raise exception.NotSupported(type_name)
 
-        if not resource_class.is_service_available(cnxt):
+        try:
+            svc_available = resource_class.is_service_available(cnxt)
+        except Exception as exc:
             raise exception.ResourceTypeUnavailable(
                 service_name=resource_class.default_client_name,
-                resource_type=type_name
-            )
+                resource_type=type_name,
+                reason=six.text_type(exc))
+        else:
+            if not svc_available:
+                raise exception.ResourceTypeUnavailable(
+                    service_name=resource_class.default_client_name,
+                    resource_type=type_name,
+                    reason='Service endpoint not in service catalog.')
 
         def properties_schema():
             for name, schema_dict in resource_class.properties_schema.items():
@@ -1541,9 +1562,9 @@ class EngineService(service.Service):
 
         def _resource_signal(stack, rsrc, details, need_check):
             LOG.debug("signaling resource %s:%s" % (stack.name, rsrc.name))
-            rsrc.signal(details, need_check)
+            needs_metadata_updates = rsrc.signal(details, need_check)
 
-            if not rsrc.signal_needs_metadata_updates:
+            if not needs_metadata_updates:
                 return
 
             # Refresh the metadata for all other resources, since signals can
