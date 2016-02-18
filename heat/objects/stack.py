@@ -71,11 +71,8 @@ class Stack(
                     raw_template.RawTemplate.get_by_id(
                         context, db_stack['raw_template_id']))
             elif field == 'tags':
-                if db_stack.get(field) is not None:
-                    stack['tags'] = stack_tag.StackTagList.get(
-                        context, db_stack['id'])
-                else:
-                    stack['tags'] = None
+                stack['tags'] = stack_tag.StackTagList.from_db_object(
+                    context, db_stack.get(field))
             else:
                 stack[field] = db_stack.__dict__.get(field)
         stack._context = context
@@ -199,7 +196,6 @@ class Stack(
         if db_stack is None:
             message = _('No stack exists with id "%s"') % str(self.id)
             raise exception.NotFound(message)
-        db_stack.refresh()
         return self.__class__._from_db_object(
             self._context,
             self,

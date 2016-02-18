@@ -19,6 +19,7 @@ from oslo_config import cfg
 from oslo_db.sqlalchemy import session as db_session
 from oslo_db.sqlalchemy import utils
 from oslo_serialization import jsonutils
+from oslo_utils import encodeutils
 from oslo_utils import timeutils
 import osprofiler.sqlalchemy
 import six
@@ -305,12 +306,15 @@ def resource_create(context, values):
     return resource_ref
 
 
-def resource_get_all_by_stack(context, stack_id, key_id=False):
-    results = model_query(
+def resource_get_all_by_stack(context, stack_id, key_id=False, filters=None):
+    query = model_query(
         context, models.Resource
     ).filter_by(
         stack_id=stack_id
-    ).options(orm.joinedload("data")).all()
+    ).options(orm.joinedload("data"))
+
+    query = db_filters.exact_filter(query, models.Resource, filters)
+    results = query.all()
 
     if not results:
         raise exception.NotFound(_("no resources for stack_id %s were found")
@@ -398,7 +402,8 @@ def _paginate_query(context, query, model, limit=None, sort_keys=None,
         query = utils.paginate_query(query, model, limit, sort_keys,
                                      model_marker, sort_dir)
     except utils.InvalidSortKey as exc:
-        raise exception.Invalid(reason=exc.message)
+        err_msg = encodeutils.exception_to_unicode(exc)
+        raise exception.Invalid(reason=err_msg)
     return query
 
 
@@ -736,7 +741,8 @@ def _events_paginate_query(context, query, model, limit=None, sort_keys=None,
         query = utils.paginate_query(query, model, limit, sort_keys,
                                      model_marker, sort_dir)
     except utils.InvalidSortKey as exc:
-        raise exception.Invalid(reason=exc.message)
+        err_msg = encodeutils.exception_to_unicode(exc)
+        raise exception.Invalid(reason=err_msg)
 
     return query
 

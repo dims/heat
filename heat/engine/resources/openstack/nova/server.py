@@ -104,10 +104,10 @@ class Server(stack_user.StackUser, sh.SchedulerHintsMixin,
 
     _NETWORK_KEYS = (
         NETWORK_UUID, NETWORK_ID, NETWORK_FIXED_IP, NETWORK_PORT,
-        NETWORK_SUBNET, NETWORK_PORT_EXTRA
+        NETWORK_SUBNET, NETWORK_PORT_EXTRA, NETWORK_FLOATING_IP
     ) = (
         'uuid', 'network', 'fixed_ip', 'port',
-        'subnet', 'port_extra_properties'
+        'subnet', 'port_extra_properties', 'floating_ip'
     )
 
     _SOFTWARE_CONFIG_FORMATS = (
@@ -129,6 +129,9 @@ class Server(stack_user.StackUser, sh.SchedulerHintsMixin,
         'name', 'addresses', 'networks', 'first_address',
         'instance_name', 'accessIPv4', 'accessIPv6', 'console_urls',
     )
+
+    # valid image Status
+    IMAGE_STATUS_ACTIVE = 'active'
 
     properties_schema = {
         NAME: properties.Schema(
@@ -388,6 +391,11 @@ class Server(stack_user.StackUser, sh.SchedulerHintsMixin,
                           'properties. If subnet is specified, network '
                           'property becomes optional.'),
                         support_status=support.SupportStatus(version='5.0.0')
+                    ),
+                    NETWORK_FLOATING_IP: properties.Schema(
+                        properties.Schema.STRING,
+                        _('ID of the floating IP to associate.'),
+                        support_status=support.SupportStatus(version='6.0.0')
                     )
                 },
             ),
@@ -795,7 +803,19 @@ class Server(stack_user.StackUser, sh.SchedulerHintsMixin,
         check = self.client_plugin()._check_active(server_id)
         if check:
             self.store_external_ports()
+            # Addresses binds to server not immediately, so we need to wait
+            # until server is created and after that associate floating ip.
+            self.floating_ips_nova_associate()
         return check
+
+    def floating_ips_nova_associate(self):
+        # If there is no neutron used, floating_ip still unassociated,
+        # so need associate it with nova.
+        if not self.is_using_neutron():
+            for net in self.properties.get(self.NETWORKS) or []:
+                if net.get(self.NETWORK_FLOATING_IP):
+                    self._floating_ip_nova_associate(
+                        net.get(self.NETWORK_FLOATING_IP))
 
     def handle_check(self):
         server = self.client().servers.get(self.resource_id)
@@ -1244,6 +1264,36 @@ class Server(stack_user.StackUser, sh.SchedulerHintsMixin,
                     ' instance %s') % self.name
             raise exception.StackValidationFailed(message=msg)
 
+        if image:
+            image_obj = self.client_plugin('glance').get_image(image)
+
+            # validate image status
+            if image_obj.status.lower() != self.IMAGE_STATUS_ACTIVE:
+                msg = _('Image status is required to be %(cstatus)s not '
+                        '%(wstatus)s.') % {
+                    'cstatus': self.IMAGE_STATUS_ACTIVE,
+                    'wstatus': image_obj.status}
+                raise exception.StackValidationFailed(message=msg)
+
+            # validate image/flavor combination
+            flavor = self.properties[self.FLAVOR]
+            flavor_obj = self.client_plugin().get_flavor(flavor)
+            if flavor_obj.ram < image_obj.min_ram:
+                msg = _('Image %(image)s requires %(imram)s minimum ram. '
+                        'Flavor %(flavor)s has only %(flram)s.') % {
+                    'image': image, 'imram': image_obj.min_ram,
+                    'flavor': flavor, 'flram': flavor_obj.ram}
+                raise exception.StackValidationFailed(message=msg)
+
+            # validate image/flavor disk compatibility
+            if flavor_obj.disk < image_obj.min_disk:
+                msg = _('Image %(image)s requires %(imsz)s GB minimum '
+                        'disk space. Flavor %(flavor)s has only '
+                        '%(flsz)s GB.') % {
+                    'image': image, 'imsz': image_obj.min_disk,
+                    'flavor': flavor, 'flsz': flavor_obj.disk}
+                raise exception.StackValidationFailed(message=msg)
+
         # network properties 'uuid' and 'network' shouldn't be used
         # both at once for all networks
         networks = self.properties[self.NETWORKS] or []
@@ -1330,6 +1380,8 @@ class Server(stack_user.StackUser, sh.SchedulerHintsMixin,
 
         if self.resource_id is None:
             return
+
+        self._floating_ips_disassociate()
 
         try:
             self.client().servers.delete(self.resource_id)
